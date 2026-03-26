@@ -13,7 +13,6 @@ import logging
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from utils.train_utils import Variable
 
 logger = logging.getLogger(__name__)
 

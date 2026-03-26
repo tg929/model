@@ -3,6 +3,9 @@
 This plan is intentionally incremental. Do not start a later step until the user validates the current step's tests.
 
 ## Step 1: Make Decoder Standalone-Executable
+Status:
+- Completed on `2026-03-26`.
+
 Goal:
 - Remove the current execution blocker so the bundled decoder example can run directly from this directory.
 
@@ -14,6 +17,9 @@ Test:
 - Running the decoder example from the local project root should complete without temporary import shims.
 
 ## Step 2: Add Repeatable Decoder Smoke Tests
+Status:
+- Next active step.
+
 Goal:
 - Create small, fast, deterministic-enough checks for the decoder's main workflows.
 

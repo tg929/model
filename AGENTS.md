@@ -25,6 +25,5 @@
 - Document real constraints and known bugs instead of hiding them.
 
 ## Current Known Issues
-- `decoder/model.py` contains a dead import from `utils.train_utils` that breaks standalone execution.
 - The current `encoder` snapshot has tokenizer and attention-mask correctness issues.
 - This directory does not yet contain a fully integrated conditioned encoder-decoder wrapper.

@@ -36,15 +36,16 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder/model.py`
   - Implements the GPT-style decoder.
   - Includes causal self-attention, RoPE, KV cache behavior, forward-pass loss calculation, sampling, and beam search generation.
+  - No longer depends on the removed `utils.train_utils.Variable` import for standalone execution.
 - `decoder/loadmodel_example.py`
   - Provides the current example entry point for loading the bundled decoder checkpoint and generating a sample SMILES string.
+  - Resolves default vocab and checkpoint paths relative to its own file location, so it can be run from either the project root or the `decoder/` directory.
 - `decoder/vocabs/vocab.txt`
   - Stores the decoder vocabulary.
 - `decoder/weights/SMILES-650M-3B-Epoch1.pt`
   - Stores the bundled pretrained decoder checkpoint used by the example loader.
 
 ## Current Known Gaps
-- The checked-in decoder example is not fully standalone because of a dead import in `decoder/model.py`.
 - The current encoder snapshot has correctness issues around tokenizer behavior and attention-mask usage.
 - Imports in the current codebase are partly script-style, so root-level execution paths are more fragile than they should be.
 - There is no formal test suite yet; validation currently depends on smoke checks and local inspection.

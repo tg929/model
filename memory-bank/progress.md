@@ -23,3 +23,12 @@
   - the current decoder example is still blocked by a dead import in the checked-in code
   - the current encoder snapshot has tokenizer and attention-mask issues
 - No model code or checkpoints were modified in this step.
+
+## 2026-03-26 Decoder Standalone Fix
+- Removed the dead `utils.train_utils.Variable` import from `decoder/model.py`.
+- Made `decoder/loadmodel_example.py` resolve default vocab and weight paths relative to the script file instead of the caller's current working directory.
+- Verified the bundled decoder example now runs from:
+  - project root via `conda run -n fraggpt python decoder/loadmodel_example.py`
+  - decoder directory via `conda run -n fraggpt python loadmodel_example.py`
+- Re-verified prefix continuation still works after the standalone fixes.
+- Step 1 of `implementation-plan.md` is now complete.

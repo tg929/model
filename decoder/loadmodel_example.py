@@ -1,6 +1,13 @@
+from pathlib import Path
+
 import torch
 from tokenizer import SmilesTokenizer
 from model import GPTConfig, GPT
+
+
+ROOT = Path(__file__).resolve().parent
+DEFAULT_VOCAB_PATH = ROOT / "vocabs" / "vocab.txt"
+DEFAULT_WEIGHT_PATH = ROOT / "weights" / "SMILES-650M-3B-Epoch1.pt"
 
 MODEL_SPECS = {
     "1M":   dict(n_layer=4,  n_head=4,  n_embd=160),
@@ -13,8 +20,8 @@ MODEL_SPECS = {
     "650M": dict(n_layer=13, n_head=32, n_embd=2048),
 }
 
-def build_tokenizer(vocab_path="vocabs/vocab.txt"):
-    tokenizer = SmilesTokenizer(vocab_path)
+def build_tokenizer(vocab_path=DEFAULT_VOCAB_PATH):
+    tokenizer = SmilesTokenizer(str(vocab_path))
     tokenizer.bos_token = "[BOS]"
     tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids("[BOS]")
     tokenizer.eos_token = "[EOS]"
@@ -23,7 +30,7 @@ def build_tokenizer(vocab_path="vocabs/vocab.txt"):
     tokenizer.sep_token_id = tokenizer.convert_tokens_to_ids("[SEP]")
     return tokenizer
 
-def load_pretrained_model(weight_path, model_size, vocab_path="vocabs/vocab.txt", device=None):
+def load_pretrained_model(weight_path, model_size, vocab_path=DEFAULT_VOCAB_PATH, device=None):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -35,7 +42,7 @@ def load_pretrained_model(weight_path, model_size, vocab_path="vocabs/vocab.txt"
     )
     model = GPT(mconf).to(device)
 
-    state_dict = torch.load(weight_path, map_location=device, weights_only=False)
+    state_dict = torch.load(str(weight_path), map_location=device, weights_only=False)
     model.load_state_dict(state_dict, strict=True)
     model.eval()
 
@@ -75,13 +82,13 @@ def calc_logits(model, tokenizer, smiles, device):
     return logits
 
 if __name__ == "__main__":
-    weight_path = "weights/SMILES-650M-3B-Epoch1.pt"
+    weight_path = DEFAULT_WEIGHT_PATH
     model_size = "650M"
 
     model, tokenizer, device = load_pretrained_model(
         weight_path=weight_path,
         model_size=model_size,
-        vocab_path="vocabs/vocab.txt",
+        vocab_path=DEFAULT_VOCAB_PATH,
     )
 
     out = generate_smiles(model, tokenizer, device, max_seq_len=256, temperature=1.0, top_k=50)
