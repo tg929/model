@@ -83,3 +83,17 @@
 - Updated the memory-bank defaults so future experiment execution uses `retrogp` instead of `fraggpt`.
 - Confirmed that `retrogp` currently has the dependencies needed for the USPTO workflow, including `rdkit` and `rxnutils`.
 - Observed a long-running full extraction process `python extract_retrosyn_data.py` still writing `USPTO-full/retrosyn_data.csv`; row counts collected before that process exits should be treated as in-progress, not final.
+
+## 2026-03-26 Retrosynthesis Task Definition
+- Recovered and documented the previously agreed rationale behind `USPTO-full/extract_retrosyn_data.py`.
+- Recorded the task definition for future model integration work:
+  - input: canonical `product` SMILES
+  - target: canonical true `reactants` SMILES joined by `.`
+  - excluded from target: solvents, catalysts, and non-contributing reagents
+  - retained alongside targets: original atom-mapped `raw_reaction`
+- Recorded the dataset-design rationale:
+  - use original `ReactionSmiles`, not `ReactionSmilesClean`
+  - preserve the original left / middle / right role structure
+  - use atom mapping to decide which left-side molecules truly contributed atoms to the product
+  - convert only those selected precursor molecules into the decoder-facing canonical SMILES target
+- Recorded that this dataset design was chosen specifically to support a future single-step retrosynthesis setup with the current local `encoder/` and `decoder/` components.

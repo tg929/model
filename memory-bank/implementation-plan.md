@@ -2,6 +2,11 @@
 
 This plan is intentionally incremental. Do not start a later step until the user validates the current step's tests.
 Unless a task explicitly requires another environment, future commands should use the `retrogp` conda environment.
+The eventual integration target is single-step retrosynthesis with:
+- input: canonical product SMILES
+- output: canonical true reactants SMILES joined by `.`
+- excluded from target: solvents, catalysts, and non-contributing reagents
+- retained for traceability: original atom-mapped `ReactionSmiles`
 
 ## Step 1: Make Decoder Standalone-Executable
 Status:

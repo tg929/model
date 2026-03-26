@@ -75,6 +75,13 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `USPTO-full/extract_retrosyn_data.py`
   - Standalone script that reads `uspto_data.csv` and writes `retrosyn_data.csv` in the same folder.
   - Parses atom-mapped `ReactionSmiles`, keeps only single-product reactions with a parseable mapped product and at least one precursor molecule sharing atom-map IDs with the product, removes atom-mapping numbers, canonicalizes SMILES, sorts precursor components, and writes `product`, `reactants`, and `raw_reaction`.
+  - The agreed task definition behind this script is single-step retrosynthesis:
+    - input: `product`, as de-mapped canonical product SMILES
+    - target: `reactants`, as de-mapped canonical true precursor SMILES joined by `.`
+    - excluded from target: solvents, catalysts, and reagent-only molecules whose atoms do not appear in the product
+    - preserved for audit/debugging: `raw_reaction`, the original atom-mapped reaction SMILES
+  - The script intentionally uses the original `ReactionSmiles` field instead of `ReactionSmilesClean` because the original field still preserves left/middle/right role structure plus atom-mapping information, which is needed to decide which left-side molecules truly contributed atoms to the product.
+  - `ReactionSmilesClean` is not the preferred extraction source for this task because its reactant/reagent simplification can blur the role information needed for atom-map-based precursor selection.
   - The script currently uses hard-coded input/output paths relative to its own file location and does not expose CLI arguments.
 - `USPTO-full/retrosyn_data.csv`
   - Generated retrosynthesis-style extraction output from `extract_retrosyn_data.py`.
@@ -84,6 +91,7 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - Imports in the current codebase are partly script-style, so root-level execution paths are more fragile than they should be.
 - There is no formal test suite yet; validation currently depends on smoke checks and local inspection.
 - The retrosynthesis extraction script does not yet accept explicit `--input` or `--output` arguments.
+- There is still no conditioned encoder-decoder wrapper that consumes `product` and generates `reactants` directly.
 
 ## Environment Notes
 - The preferred local environment is `retrogp`.
