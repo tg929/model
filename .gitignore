@@ -1,3 +1,6 @@
 *.pt
 *.pyc
 data/*
+data_process/*
+USPTO-full/*
+.metaflow/*
