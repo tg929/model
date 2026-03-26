@@ -42,3 +42,20 @@
 ## 2026-03-26 Root Smoke Script
 - Added `decoder/test_decoder.py` as a small wrapper for decoder prefix continuation.
 - The script defaults to prefix `CCO` and also accepts a prefix as the first CLI argument.
+
+## 2026-03-26 Encoder Fixes
+- Fixed encoder SMILES tokenization in `encoder/local_bert.py` by wiring `SmilesTokenizer` to the regex-based `BasicSmilesTokenizer` and restoring token/id conversion helpers.
+- Updated `encoder/encoders.py` so `LocalBertEncoder` builds its tokenizer with `do_lower_case=False`, preserving uppercase chemical tokens.
+- Fixed encoder attention so `BidirectionalSelfFlashAttention` actually passes `attn_mask` into `scaled_dot_product_attention`.
+- Normalized encoder attention-mask handling in `BERT.forward()` so common 2D masks are converted into additive attention masks before attention.
+- Fixed `encoder/encoders.py` imports so `from encoder.encoders import ...` works from the project root while preserving script-style execution compatibility.
+- Validated the fixes with local smoke checks:
+  - `CC(=O)OCl` now tokenizes to `['C', 'C', '(', '=', 'O', ')', 'O', 'Cl']`
+  - changing the attention mask now changes encoder outputs
+  - package-style import of `encoder.encoders` now succeeds
+- Inspected the encoder checkpoint metadata and confirmed it is a training checkpoint containing:
+  - `step`
+  - `model_state_dict`
+  - `optimizer_state_dict`
+  - `scaler_state_dict`
+  - `loss`

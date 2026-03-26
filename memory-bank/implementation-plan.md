@@ -32,6 +32,9 @@ Test:
 - Each smoke path has a documented command and completes successfully in the local `fraggpt` environment.
 
 ## Step 3: Fix Encoder Tokenization Correctness
+Status:
+- Completed on `2026-03-26` by explicit user request.
+
 Goal:
 - Ensure the encoder tokenization logic preserves the intended SMILES semantics and special-token handling.
 
@@ -43,6 +46,9 @@ Test:
 - The encoder tokenizer should tokenize representative SMILES strings without collapsing important tokens into `[UNK]` unexpectedly.
 
 ## Step 4: Fix Encoder Padding-Mask Behavior
+Status:
+- Completed on `2026-03-26` by explicit user request.
+
 Goal:
 - Ensure padded positions do not contribute as normal context during encoder attention.
 
@@ -54,6 +60,9 @@ Test:
 - Padding-aware forward passes should preserve expected tensor shapes and respect the provided attention mask.
 
 ## Step 5: Clean Up Module Boundaries
+Status:
+- Completed on `2026-03-26` for the encoder import path by explicit user request.
+
 Goal:
 - Make execution paths less fragile by clarifying whether modules should be used as package imports, scripts, or both.
 

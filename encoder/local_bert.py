@@ -58,6 +58,7 @@ class BidirectionalSelfFlashAttention(nn.Module):
 
         attn_output = F.scaled_dot_product_attention(
             q, k, v,
+            attn_mask=attention_mask,
             dropout_p=dropout_p,
             is_causal=False,
         )
@@ -180,9 +181,16 @@ class BERT(nn.Module):
             token_type_ids = torch.zeros_like(input_ids, dtype=torch.long)
 
         if attention_mask is None:
-            attention_mask = (input_ids != 0).unsqueeze(1).unsqueeze(2)
-            attention_mask = attention_mask.to(dtype=torch.float32)
-            attention_mask = (1.0 - attention_mask) * -10000.0
+            attention_mask = input_ids != 0
+
+        mask_dtype = self.embeddings.tok_emb.weight.dtype
+        if attention_mask.dim() == 2:
+            attention_mask = attention_mask[:, None, None, :]
+            attention_mask = (1.0 - attention_mask.to(dtype=mask_dtype)) * -10000.0
+        elif attention_mask.dtype == torch.bool:
+            attention_mask = (~attention_mask).to(dtype=mask_dtype) * -10000.0
+        else:
+            attention_mask = attention_mask.to(dtype=mask_dtype)
 
         x = self.embeddings(input_ids, token_type_ids)
 
@@ -222,6 +230,7 @@ class SmilesTokenizer(BertTokenizer):
 
         self.vocab = load_vocab(vocab_file)
         self.ids_to_tokens = collections.OrderedDict([(ids, tok) for tok, ids in self.vocab.items()])
+        self.basic_tokenizer = BasicSmilesTokenizer()
 
     @property
     def vocab_size(self):
@@ -230,6 +239,16 @@ class SmilesTokenizer(BertTokenizer):
     @property
     def vocab_list(self):
         return list(self.vocab.keys())
+
+    def _tokenize(self, text: str, max_seq_length: int = 512, **kwargs):
+        max_len_single_sentence = max_seq_length - 2
+        return [token for token in self.basic_tokenizer.tokenize(text)[:max_len_single_sentence]]
+
+    def _convert_token_to_id(self, token: str):
+        return self.vocab.get(token, self.vocab.get(self.unk_token))
+
+    def _convert_id_to_token(self, index: int):
+        return self.ids_to_tokens.get(index, self.unk_token)
 
 
 class BasicSmilesTokenizer(object):

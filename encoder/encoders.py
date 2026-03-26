@@ -3,7 +3,10 @@ import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoTokenizer
 
-from local_bert import SmilesTokenizer, load_yaml, BertConfig, BERT
+try:
+    from .local_bert import SmilesTokenizer, load_yaml, BertConfig, BERT
+except ImportError:
+    from local_bert import SmilesTokenizer, load_yaml, BertConfig, BERT
 
 
 def _set_smiles_special(tok):
@@ -40,7 +43,7 @@ class HFEncoder(nn.Module):
 class LocalBertEncoder(nn.Module):
     def __init__(self, base: str):
         super().__init__()
-        tok = SmilesTokenizer(os.path.join(base, "vocab.txt"))
+        tok = SmilesTokenizer(os.path.join(base, "vocab.txt"), do_lower_case=False)
         self.tokenizer = _set_smiles_special(tok)
 
         enc_cfg = load_yaml(os.path.join(base, "encoder.yaml"))

@@ -25,5 +25,4 @@
 - Document real constraints and known bugs instead of hiding them.
 
 ## Current Known Issues
-- The current `encoder` snapshot has tokenizer and attention-mask correctness issues.
 - This directory does not yet contain a fully integrated conditioned encoder-decoder wrapper.
