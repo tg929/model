@@ -1,6 +1,7 @@
 # Implementation Plan
 
 This plan is intentionally incremental. Do not start a later step until the user validates the current step's tests.
+Unless a task explicitly requires another environment, future commands should use the `retrogp` conda environment.
 
 ## Step 1: Make Decoder Standalone-Executable
 Status:
@@ -29,7 +30,7 @@ Deliverables:
 - A smoke path for logits/scoring on a provided SMILES string.
 
 Test:
-- Each smoke path has a documented command and completes successfully in the local `fraggpt` environment.
+- Each smoke path has a documented command and completes successfully in the local `retrogp` environment.
 
 ## Step 3: Fix Encoder Tokenization Correctness
 Status:

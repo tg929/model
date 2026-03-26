@@ -13,6 +13,17 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 ## Root Files
 - `AGENTS.md`: instructs future coding agents to read the memory bank first, work incrementally, and keep the docs updated.
 
+## Data Workspaces
+- `USPTO-full/`
+  - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
+  - This is the canonical local source for the current USPTO reaction data workflow.
+- `.metaflow/`
+  - Stores local execution metadata for the USPTO preparation workflow.
+  - Currently contains records for `UsptoDataPreparationFlow`, which produced the checked-in `USPTO-full/` data artifacts.
+- `有待删除/data/`
+  - Stores an older incorrect dataset split (`train.csv`, `eval.csv`, `test.csv`).
+  - This directory is deprecated and should not be used for future experiments unless the user explicitly asks for it.
+
 ## `encoder/`
 - `encoder/encoders.py`
   - Wrapper and construction layer for encoder modules.
@@ -49,10 +60,32 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder/weights/SMILES-650M-3B-Epoch1.pt`
   - Stores the bundled pretrained decoder checkpoint used by the example loader.
 
+## `USPTO-full/`
+- `USPTO-full/README.md`
+  - Documents the local USPTO preparation and atom-mapping workflow driven by `reaction-utils`.
+- `USPTO-full/prepare_uspto_full.sh`
+  - Runs `rxnutils.data.uspto.preparation_pipeline` in-place under `USPTO-full/`.
+- `USPTO-full/map_uspto_full.sh`
+  - Runs `rxnutils.data.mapping_pipeline` against the prepared USPTO data.
+- `USPTO-full/uspto_data.csv`
+  - Tab-delimited atom-mapped USPTO reaction dataset with columns `ID`, `Year`, and `ReactionSmiles`.
+  - This is the current input used by the retrosynthesis extraction script.
+- `USPTO-full/uspto_data_cleaned.csv`
+  - Additional cleaned USPTO artifact produced during preparation; present alongside the mapped source data.
+- `USPTO-full/extract_retrosyn_data.py`
+  - Standalone script that reads `uspto_data.csv` and writes `retrosyn_data.csv` in the same folder.
+  - Parses atom-mapped `ReactionSmiles`, keeps only single-product reactions with a parseable mapped product and at least one precursor molecule sharing atom-map IDs with the product, removes atom-mapping numbers, canonicalizes SMILES, sorts precursor components, and writes `product`, `reactants`, and `raw_reaction`.
+  - The script currently uses hard-coded input/output paths relative to its own file location and does not expose CLI arguments.
+- `USPTO-full/retrosyn_data.csv`
+  - Generated retrosynthesis-style extraction output from `extract_retrosyn_data.py`.
+  - This file should be treated as an extraction artifact; duplicates are currently preserved unless a later step writes a deduplicated derivative.
+
 ## Current Known Gaps
 - Imports in the current codebase are partly script-style, so root-level execution paths are more fragile than they should be.
 - There is no formal test suite yet; validation currently depends on smoke checks and local inspection.
+- The retrosynthesis extraction script does not yet accept explicit `--input` or `--output` arguments.
 
 ## Environment Notes
-- The preferred local environment is `fraggpt`.
+- The preferred local environment is `retrogp`.
+- If a requested workflow fails because `retrogp` is missing a dependency, install the missing package in `retrogp` before continuing.
 - Heavy checkpoints are part of the local source tree and should be treated as assets, not disposable artifacts.

@@ -64,3 +64,22 @@
 - Added `encoder/test_encoder.py` as a simple local smoke test for the fixed encoder path.
 - The script loads the local encoder checkpoint, tokenizes a SMILES string, builds `input_ids` plus `attention_mask`, runs a forward pass, and prints the resulting tensor shape.
 - The script defaults to `CC(=O)OCl` and accepts a SMILES string as the first CLI argument.
+
+## 2026-03-26 USPTO Dataset Workflow
+- Confirmed that the older dataset under `有待删除/data/` (`train.csv`, `eval.csv`, `test.csv`) is the wrong source and should not be used for future experiments.
+- Confirmed that the correct USPTO data workflow for this repository is now anchored in:
+  - `USPTO-full/` for downloaded and mapped data artifacts
+  - `.metaflow/UsptoDataPreparationFlow` for local execution records of the preparation pipeline
+- Reviewed `USPTO-full/prepare_uspto_full.sh` and `USPTO-full/map_uspto_full.sh` and documented that they run the `rxnutils` USPTO preparation and atom-mapping pipelines in-place.
+- Reviewed `USPTO-full/uspto_data.csv` and confirmed that it is a tab-delimited file with columns `ID`, `Year`, and atom-mapped `ReactionSmiles`.
+- Reviewed `USPTO-full/extract_retrosyn_data.py` and confirmed that it:
+  - reads `USPTO-full/uspto_data.csv`
+  - writes `USPTO-full/retrosyn_data.csv`
+  - discards reactions whose product side is unparsable, multi-product, or missing atom maps
+  - merges reactants plus reagents, keeps only molecules whose atom-map IDs overlap with the product, removes atom-mapping, canonicalizes SMILES, sorts precursor components, and writes `product`, `reactants`, and `raw_reaction`
+  - preserves duplicates and currently has no CLI arguments for overriding input or output paths
+- Verified the extraction script is standalone-executable in `retrogp` with a 20-row isolated sample run:
+  - `total=20 kept=11 skipped=9`
+- Updated the memory-bank defaults so future experiment execution uses `retrogp` instead of `fraggpt`.
+- Confirmed that `retrogp` currently has the dependencies needed for the USPTO workflow, including `rdkit` and `rxnutils`.
+- Observed a long-running full extraction process `python extract_retrosyn_data.py` still writing `USPTO-full/retrosyn_data.csv`; row counts collected before that process exits should be treated as in-progress, not final.
