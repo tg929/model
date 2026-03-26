@@ -59,3 +59,8 @@
   - `optimizer_state_dict`
   - `scaler_state_dict`
   - `loss`
+
+## 2026-03-26 Encoder Smoke Script
+- Added `encoder/test_encoder.py` as a simple local smoke test for the fixed encoder path.
+- The script loads the local encoder checkpoint, tokenizes a SMILES string, builds `input_ids` plus `attention_mask`, runs a forward pass, and prints the resulting tensor shape.
+- The script defaults to `CC(=O)OCl` and accepts a SMILES string as the first CLI argument.
