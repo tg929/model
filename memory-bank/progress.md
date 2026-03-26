@@ -32,3 +32,13 @@
   - decoder directory via `conda run -n fraggpt python loadmodel_example.py`
 - Re-verified prefix continuation still works after the standalone fixes.
 - Step 1 of `implementation-plan.md` is now complete.
+
+## 2026-03-26 Retrogp Environment Validation
+- Installed `transformers 4.50.3` into the `retrogp` conda environment so the original `model/decoder` code can run there.
+- Verified unconditional generation in `retrogp` with `python decoder/loadmodel_example.py` from the project root.
+- Verified prefix-conditioned continuation in `retrogp` using only files under `/data1/ytg/model`.
+- Confirmed that the original `model` directory still does not provide a standalone external-condition encoder-decoder generation entry point.
+
+## 2026-03-26 Root Smoke Script
+- Added `decoder/test_decoder.py` as a small wrapper for decoder prefix continuation.
+- The script defaults to prefix `CCO` and also accepts a prefix as the first CLI argument.
