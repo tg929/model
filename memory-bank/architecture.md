@@ -55,6 +55,14 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder/loadmodel_example.py`
   - Provides the current example entry point for loading the bundled decoder checkpoint and generating a sample SMILES string.
   - Resolves default vocab and checkpoint paths relative to its own file location, so it can be run from either the project root or the `decoder/` directory.
+- `decoder/train_retrosyn_only_decoder.py`
+  - Fine-tunes the local decoder on retrosynthesis-only-decoder JSONL data.
+  - Expects `source_text = product>>` and `target_text = reactants`.
+  - Masks the source prefix tokens from the loss and trains only on target-side next-token prediction.
+  - Writes `best.pt`, `latest.pt`, `metrics.jsonl`, and `run_config.json` into the specified output directory.
+- `decoder/eval_retrosyn_only_decoder.py`
+  - Evaluates a retrosynthesis decoder checkpoint with beam search.
+  - Reports top-k exact match, canonicalized reactant match, largest-fragment match, and top-1 invalid-SMILES rate.
 - `decoder/vocabs/vocab.txt`
   - Stores the decoder vocabulary.
 - `decoder/weights/SMILES-650M-3B-Epoch1.pt`
@@ -86,6 +94,17 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `USPTO-full/retrosyn_data.csv`
   - Generated retrosynthesis-style extraction output from `extract_retrosyn_data.py`.
   - This file should be treated as an extraction artifact; duplicates are currently preserved unless a later step writes a deduplicated derivative.
+- `USPTO-full/prepare_only_decoder_data.py`
+  - Builds the current only-decoder training dataset directly from `uspto_data.csv`.
+  - Reuses `mapped_precursors()` from `extract_retrosyn_data.py` to recover `product -> reactants`, then aggregates duplicate `(product, reactants)` pairs, computes decoder token statistics, drops rows with `[UNK]` or sequence length above the configured threshold, and creates product-exclusive train/val/test splits.
+  - Writes decoder-ready CSV and JSONL files under `USPTO-full/processed_only_decoder/`.
+- `USPTO-full/processed_only_decoder/`
+  - Stores the current generated only-decoder dataset artifacts.
+  - `retrosyn_with_meta.csv` keeps row-level extraction metadata including `id`, `patent_id`, `year`, and `raw_reaction`.
+  - `retrosyn_pair_dedup_product_split.csv` stores deduplicated `(product, reactants)` pairs plus split assignment and token-length metadata.
+  - `retrosyn_pair_dropped.csv` stores rows removed by `[UNK]` or max-sequence-length filtering.
+  - `train.jsonl`, `val.jsonl`, and `test.jsonl` are the current training inputs for `decoder/train_retrosyn_only_decoder.py`.
+  - `summary.json` records split sizes, product-overlap checks, token-filter counts, and sequence-length statistics.
 
 ## Current Known Gaps
 - Imports in the current codebase are partly script-style, so root-level execution paths are more fragile than they should be.

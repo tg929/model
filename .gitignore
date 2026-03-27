@@ -3,5 +3,12 @@
 data/*
 data_process/*
 USPTO-full/*
+!USPTO-full/*.py
+!USPTO-full/*.sh
+!USPTO-full/*.md
+USPTO-full/__pycache__/*
+USPTO-full/*.log
+USPTO-full/processed_only_decoder/*
 .metaflow/*
 有待删除/*
+decoder_runs/*

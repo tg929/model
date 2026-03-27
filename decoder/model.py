@@ -298,7 +298,8 @@ class GPT(nn.Module):
     @torch.inference_mode()
     def beam_search_generate(self, idx, tokenizer, max_new_tokens, beam_width=5,
                              temperature=0.0, top_k=None,  rp=1.0, stream=True,
-                             kv_cache=True, is_simulation=False, linker=False):
+                             kv_cache=True, is_simulation=False, linker=False,
+                             num_return_sequences=1):
         # 初始化beam：每个候选保存 (score, sequence, ended)
         beam = [(0.0, idx, False)]  # 初始beam包含输入序列
         eos_id = tokenizer.eos_token_id
@@ -377,11 +378,11 @@ class GPT(nn.Module):
 
         beam = sorted(candidates, key=lambda x: -x[0])[:beam_width]
 
-        # ans = []
-        # for i in range(min(100, beam_width)):
-        #     ans.append(beam[i][1][:, idx.shape[1]:])
-        ans = beam[0][1][:, idx.shape[1]:]
-        yield ans
+        answers = [beam[i][1][:, idx.shape[1]:] for i in range(min(num_return_sequences, len(beam)))]
+        if num_return_sequences == 1:
+            yield answers[0]
+        else:
+            yield answers
 
 
 
