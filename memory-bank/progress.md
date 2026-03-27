@@ -146,3 +146,40 @@
   - step `3000`: `val_loss=0.3224`, `val_perplexity=1.3805`
   - step `4000`: `val_loss=0.3023`, `val_perplexity=1.3529`
   - step `5000`: `val_loss=0.2915`, `val_perplexity=1.3384`
+
+## 2026-03-27 Only-Decoder Latest Snapshot Re-Eval
+- Confirmed the first long baseline run finished at `global_step=31603` with:
+  - `train_loss=0.1845`
+  - `val_loss=0.1982`
+  - `val_perplexity=1.2193`
+- Created a frozen evaluation snapshot from the final `latest.pt` at:
+  - `decoder_runs/only_decoder_650m_v1/results/test-2/latest_test100_snapshot.pt`
+- Re-ran the same 100-sample beam-search evaluation setup used for the earlier spot check:
+  - `beam_width=10`
+  - `top_ks=1,3,5,10`
+  - `max_new_tokens=256`
+  - `max_samples=100`
+  - `device=cuda`
+- Recorded the new `test-2` metrics:
+  - `top1 exact/canonical = 0.10`
+  - `top3 exact/canonical = 0.16`
+  - `top5 exact/canonical = 0.19`
+  - `top10 exact/canonical = 0.21`
+  - `top1 maxfrag = 0.13`
+  - `top3 maxfrag = 0.21`
+  - `top5 maxfrag = 0.23`
+  - `top10 maxfrag = 0.25`
+  - `top1 invalid = 0.00`
+- Compared with the earlier `test-1` spot check:
+  - top-1 exact improved from `0.08` to `0.10`
+  - top-3 exact improved from `0.12` to `0.16`
+  - top-5 exact improved from `0.14` to `0.19`
+  - top-10 exact improved from `0.16` to `0.21`
+  - top-1 maxfrag improved from `0.11` to `0.13`
+  - top-3 maxfrag improved from `0.16` to `0.21`
+  - top-5 maxfrag improved from `0.20` to `0.23`
+  - top-10 maxfrag improved from `0.22` to `0.25`
+  - top-1 invalid stayed at `0.00`
+- Confirmed a current evaluation-path constraint:
+  - when `decoder/eval_retrosyn_only_decoder.py` is pointed at a full training checkpoint like `latest.pt`, it must also be given `--weight-path /data1/ytg/model/decoder/weights/SMILES-650M-3B-Epoch1.pt`
+  - otherwise the script tries to treat the training checkpoint as a raw model state dict and fails during the initial load
