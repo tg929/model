@@ -209,3 +209,27 @@
 - Confirmed that the larger 1000-sample estimate is broadly consistent with `test-2`, but slightly stronger on every top-k exact metric:
   - `test-2 top1/top3/top5/top10 exact = 0.10 / 0.16 / 0.19 / 0.21`
   - `test-3-1000 top1/top3/top5/top10 exact = 0.118 / 0.178 / 0.208 / 0.225`
+
+## 2026-03-27 Validation And Multi-Epoch Planning Notes
+- Re-checked the current training-time validation behavior in `decoder/train_retrosyn_only_decoder.py`:
+  - validation is teacher-forced loss/perplexity, not beam-search generation metrics
+  - `val_loader` uses `shuffle=False`
+  - `max_val_batches` truncates both mid-epoch and epoch-end validation to the same fixed prefix of the validation set
+- Re-verified the processed only-decoder splits are disjoint:
+  - `(product, target_text)` overlap is zero across `train`, `val`, and `test`
+  - `product` overlap is also zero across all split pairs
+- Ran local batch-size probes on the `RTX 5090 32GB` machine and found:
+  - `batch_size=16` with `grad_accum_steps=1` is a low-risk recommended setting because it preserves the original effective batch size of `16`
+  - `batch_size=32` is also feasible but changes the effective batch size and optimization behavior
+  - `batch_size=64` hits CUDA OOM
+- Discussed a future 5-epoch chained training workflow under `decoder_runs/only_decoder_650m_5epoch/` with:
+  - one subdirectory per epoch
+  - periodic step checkpoints
+  - full-validation checkpoints every `1/5` epoch
+  - a global `best.pt` that persists across epoch boundaries
+- Fixed the current intended experiment policy before implementation:
+  - `epoch1` should start from the bundled pretrained decoder weights `decoder/weights/SMILES-650M-3B-Epoch1.pt`
+  - periodic `epoch-step` snapshots should prioritize lower storage as long as they remain usable for downstream evaluation and retrosynthesis metrics
+  - `batch_size` is still under discussion between a conservative `16 x 1` setup and a more aggressive `32 x 1` setup
+- Noted an implementation gap to address before that workflow can exist:
+  - the current checked-in trainer still lacks a `--resume-checkpoint` load path even though checkpoints already save `optimizer_state_dict`, `epoch`, `step`, and `best_val_loss`
