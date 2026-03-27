@@ -183,3 +183,29 @@
 - Confirmed a current evaluation-path constraint:
   - when `decoder/eval_retrosyn_only_decoder.py` is pointed at a full training checkpoint like `latest.pt`, it must also be given `--weight-path /data1/ytg/model/decoder/weights/SMILES-650M-3B-Epoch1.pt`
   - otherwise the script tries to treat the training checkpoint as a raw model state dict and fails during the initial load
+
+## 2026-03-27 Reusable Decoder Eval Runner
+- Added `decoder_runs/run_only_decoder_eval.py` as a reusable wrapper for long-running only-decoder evaluation jobs.
+- The script now:
+  - resolves the repository-relative defaults for `run-dir`, test data JSONL, bundled 650M base weights, and the existing eval entry point
+  - copies a selected checkpoint such as `latest.pt` into a named `results/<label>/` snapshot file
+  - invokes `decoder/eval_retrosyn_only_decoder.py` with consistent artifact naming for `*_metrics.json` and `*_predictions.jsonl`
+  - forwards the common knobs for `beam_width`, `top_ks`, `max_new_tokens`, `max_samples`, `device`, and `model_size`
+  - supports `--dry-run` for checking the resolved paths and final eval command without launching the heavy job
+- Verified the new script with:
+  - `conda run -n retrogp python decoder_runs/run_only_decoder_eval.py --run-dir /data1/ytg/model/decoder_runs/only_decoder_650m_v1 --label test-script-dryrun --max-samples 1000 --dry-run`
+- Started a longer `test-3-1000` evaluation run from the final `latest.pt` snapshot under:
+  - `decoder_runs/only_decoder_650m_v1/results/test-3-1000/`
+  - completed with:
+    - `top1 exact = 0.118`
+    - `top3 exact = 0.178`
+    - `top5 exact = 0.208`
+    - `top10 exact = 0.225`
+    - `top1 canonical = 0.120`
+    - `top10 canonical = 0.231`
+    - `top1 maxfrag = 0.178`
+    - `top10 maxfrag = 0.291`
+    - `top1 invalid = 0.005`
+- Confirmed that the larger 1000-sample estimate is broadly consistent with `test-2`, but slightly stronger on every top-k exact metric:
+  - `test-2 top1/top3/top5/top10 exact = 0.10 / 0.16 / 0.19 / 0.21`
+  - `test-3-1000 top1/top3/top5/top10 exact = 0.118 / 0.178 / 0.208 / 0.225`

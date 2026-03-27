@@ -14,6 +14,9 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `AGENTS.md`: instructs future coding agents to read the memory bank first, work incrementally, and keep the docs updated.
 
 ## Data Workspaces
+- `decoder_runs/`
+  - Stores only-decoder training runs, evaluation snapshots, and reusable run/eval helpers for this repository.
+  - `decoder_runs/run_only_decoder_eval.py` freezes a selected run checkpoint into a results subdirectory and invokes the existing beam-search retrosynthesis evaluator with consistent naming for snapshot, metrics, and predictions artifacts.
 - `USPTO-full/`
   - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
   - This is the canonical local source for the current USPTO reaction data workflow.
