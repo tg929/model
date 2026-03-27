@@ -97,3 +97,52 @@
   - use atom mapping to decide which left-side molecules truly contributed atoms to the product
   - convert only those selected precursor molecules into the decoder-facing canonical SMILES target
 - Recorded that this dataset design was chosen specifically to support a future single-step retrosynthesis setup with the current local `encoder/` and `decoder/` components.
+
+## 2026-03-27 Only-Decoder Dataset And Training Entry
+- Added `USPTO-full/prepare_only_decoder_data.py` to build only-decoder retrosynthesis training data directly from `USPTO-full/uspto_data.csv`.
+- Confirmed the script writes its generated artifacts to `USPTO-full/processed_only_decoder/`.
+- Verified the generated dataset summary:
+  - `num_extracted_rows=1705815`
+  - `num_pair_rows_before_filter=633559`
+  - `num_pair_rows=632053`
+  - `num_pair_rows_dropped=1506`
+  - `train/val/test=505641/63206/63206`
+  - product overlap across splits is zero for all split pairs
+  - retained rows contain zero `[UNK]` tokens on both product and reactants sides
+- Confirmed that the current split logic is product-exclusive and targets an `80/10/10` row-level split by deduplicated `(product, reactants)` pairs.
+- Added `decoder/train_retrosyn_only_decoder.py` as the current fine-tuning entry point for only-decoder retrosynthesis training.
+- Added `decoder/eval_retrosyn_only_decoder.py` as the current beam-search evaluation entry point for top-k retrosynthesis metrics.
+- Ran a real-data smoke training on `USPTO-full/processed_only_decoder/train.jsonl` and `val.jsonl`:
+  - `fraggpt`, `cuda`
+  - `batch_size=1`
+  - `max_train_steps=10`
+  - output directory: `decoder_runs/only_decoder_smoke`
+  - produced `best.pt`, `latest.pt`, `metrics.jsonl`, and `run_config.json`
+- Ran a second probe with a more realistic configuration:
+  - `fraggpt`, `cuda`
+  - `batch_size=2`
+  - `grad_accum_steps=8`
+  - `max_train_steps=1`
+  - output directory: `decoder_runs/only_decoder_probe_bs2`
+  - completed successfully without an OOM, so `batch_size=2` is a safe baseline starting point on the local `RTX 5090 32GB` machine.
+- Started the first longer baseline fine-tuning run:
+  - output directory: `decoder_runs/only_decoder_650m_v1`
+  - pretrained initialization: `decoder/weights/SMILES-650M-3B-Epoch1.pt`
+  - `fraggpt`, `cuda`
+  - `batch_size=2`
+  - `grad_accum_steps=8`
+  - `epochs=1`
+  - `eval_every_steps=1000`
+  - `max_val_batches=200`
+  - `num_workers=2`
+- Confirmed the longer run is actively training on GPU and has already written:
+  - `decoder_runs/only_decoder_650m_v1/run_config.json`
+  - `decoder_runs/only_decoder_650m_v1/metrics.jsonl`
+  - `decoder_runs/only_decoder_650m_v1/best.pt`
+  - `decoder_runs/only_decoder_650m_v1/latest.pt`
+- Recorded the current observed validation trend from the ongoing baseline run:
+  - step `1000`: `val_loss=0.4139`, `val_perplexity=1.5127`
+  - step `2000`: `val_loss=0.3629`, `val_perplexity=1.4375`
+  - step `3000`: `val_loss=0.3224`, `val_perplexity=1.3805`
+  - step `4000`: `val_loss=0.3023`, `val_perplexity=1.3529`
+  - step `5000`: `val_loss=0.2915`, `val_perplexity=1.3384`
