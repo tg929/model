@@ -254,3 +254,14 @@
   - `conda run -n retrogp python -m py_compile decoder/train_retrosyn_only_decoder.py decoder_runs/run_only_decoder_5epoch.py`
   - `conda run -n retrogp python decoder/train_retrosyn_only_decoder.py --help`
   - `conda run -n retrogp python decoder_runs/run_only_decoder_5epoch.py --help`
+
+## 2026-03-28 Continue Existing Epoch Chain
+- Updated `decoder_runs/run_only_decoder_5epoch.py` so it can continue an existing experiment root instead of only creating a fresh one.
+- Added support for:
+  - `--start-epoch` to append later epoch directories such as `epoch6` through `epoch10`
+  - `--resume-checkpoint` for explicitly choosing the checkpoint to continue from
+  - automatic fallback to `epoch{start_epoch-1}/latest.pt` when continuing an existing experiment root
+- Preserved the existing shared-root behavior for `best.pt`, so later appended epochs continue competing against the same global validation best.
+
+## 2026-03-28 Git Tracking For Decoder Run Scripts
+- Updated `.gitignore` so `decoder_runs/` keeps ignoring run artifacts and checkpoints while allowing top-level Python helpers such as `decoder_runs/run_only_decoder_eval.py` and `decoder_runs/run_only_decoder_5epoch.py` to be tracked by git.

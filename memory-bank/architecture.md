@@ -17,7 +17,7 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder_runs/`
   - Stores only-decoder training runs, evaluation snapshots, and reusable run/eval helpers for this repository.
   - `decoder_runs/run_only_decoder_eval.py` freezes a selected run checkpoint into a results subdirectory and invokes the existing beam-search retrosynthesis evaluator with consistent naming for snapshot, metrics, and predictions artifacts.
-  - `decoder_runs/run_only_decoder_5epoch.py` orchestrates chained only-decoder training runs across per-epoch subdirectories, starting from the bundled pretrained decoder weights for epoch 1 and resuming each later epoch from the previous epoch's `latest.pt` while sharing a root-level `best.pt`.
+  - `decoder_runs/run_only_decoder_5epoch.py` orchestrates chained only-decoder training runs across per-epoch subdirectories, can start a fresh experiment from the bundled pretrained decoder weights, and can continue an existing experiment from an arbitrary `start_epoch` plus resume checkpoint while sharing one root-level `best.pt`.
 - `USPTO-full/`
   - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
   - This is the canonical local source for the current USPTO reaction data workflow.

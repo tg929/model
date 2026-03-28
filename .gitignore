@@ -12,3 +12,5 @@ USPTO-full/processed_only_decoder/*
 .metaflow/*
 有待删除/*
 decoder_runs/*
+!decoder_runs/*.py
+decoder_runs/__pycache__/*
