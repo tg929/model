@@ -91,6 +91,13 @@ def move_to_device(batch: Dict[str, torch.Tensor], device: str) -> Dict[str, tor
     return {key: value.to(device) for key, value in batch.items()}
 
 
+def move_optimizer_state_to_device(optimizer, device: str) -> None:
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
+
+
 @torch.no_grad()
 def evaluate_loss(model, tokenizer, dataloader: DataLoader, device: str, autocast_dtype, max_batches: int | None) -> Dict[str, float]:
     model.eval()
@@ -119,6 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-jsonl", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--weight-path", type=Path, required=True)
+    parser.add_argument("--resume-checkpoint", type=Path, default=None)
     parser.add_argument("--model-size", type=str, default="650M")
     parser.add_argument("--vocab-path", type=Path, default=DEFAULT_VOCAB_PATH)
     parser.add_argument("--epochs", type=int, default=1)
@@ -132,6 +140,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-train-steps", type=int, default=None)
     parser.add_argument("--eval-every-steps", type=int, default=1000)
     parser.add_argument("--max-val-batches", type=int, default=200)
+    parser.add_argument("--full-val", action="store_true")
+    parser.add_argument("--val-checks-per-epoch", type=int, default=None)
+    parser.add_argument("--save-every-steps", type=int, default=None)
+    parser.add_argument("--best-path", type=Path, default=None)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--device", type=str, default=None)
@@ -154,8 +166,40 @@ def save_checkpoint(path: Path, model, optimizer, epoch: int, step: int, best_va
     )
 
 
+def save_model_weights(path: Path, model) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), path)
+
+
+def load_training_checkpoint(path: Path, model, optimizer, device: str) -> tuple[int, int, float]:
+    checkpoint = torch.load(str(path), map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    move_optimizer_state_to_device(optimizer, device)
+    start_epoch = int(checkpoint["epoch"]) + 1
+    global_step = int(checkpoint["step"])
+    best_val_loss = float(checkpoint["best_val_loss"])
+    return start_epoch, global_step, best_val_loss
+
+
+def build_validation_milestones(steps_per_epoch: int, checks_per_epoch: int | None) -> list[int]:
+    if checks_per_epoch is None:
+        return []
+    return sorted({math.ceil(steps_per_epoch * idx / checks_per_epoch) for idx in range(1, checks_per_epoch + 1)})
+
+
+def append_metric(metrics_path: Path, record: Dict[str, float | int | str]) -> None:
+    with metrics_path.open("a", encoding="utf-8") as fout:
+        fout.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+
 def main() -> None:
     args = parse_args()
+    if args.val_checks_per_epoch is not None and args.val_checks_per_epoch < 1:
+        raise ValueError("--val-checks-per-epoch must be at least 1.")
+    if args.save_every_steps is not None and args.save_every_steps < 1:
+        raise ValueError("--save-every-steps must be at least 1.")
+
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
@@ -203,19 +247,75 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = args.output_dir / "metrics.jsonl"
     run_config_path = args.output_dir / "run_config.json"
+    best_path = args.best_path if args.best_path is not None else args.output_dir / "best.pt"
     with run_config_path.open("w", encoding="utf-8") as fout:
         json.dump({k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}, fout, indent=2, ensure_ascii=True)
         fout.write("\n")
 
     global_step = 0
+    start_epoch = 1
     best_val_loss = float("inf")
-    optimizer.zero_grad(set_to_none=True)
+    if args.resume_checkpoint is not None:
+        start_epoch, global_step, best_val_loss = load_training_checkpoint(args.resume_checkpoint, model, optimizer, device)
 
-    for epoch in range(1, args.epochs + 1):
+    optimizer.zero_grad(set_to_none=True)
+    val_max_batches = None if args.full_val else args.max_val_batches
+    optimizer_steps_per_epoch = math.ceil(len(train_loader) / args.grad_accum_steps)
+
+    for epoch in range(start_epoch, start_epoch + args.epochs):
         model.train()
         epoch_loss = 0.0
         epoch_batches = 0
+        epoch_step = 0
         start_time = time.time()
+        val_milestones = build_validation_milestones(optimizer_steps_per_epoch, args.val_checks_per_epoch)
+        next_val_idx = 0
+
+        def after_optimizer_step() -> None:
+            nonlocal global_step
+            nonlocal best_val_loss
+            nonlocal epoch_step
+            nonlocal next_val_idx
+
+            global_step += 1
+            epoch_step += 1
+
+            if args.save_every_steps is not None and (epoch_step % args.save_every_steps) == 0:
+                save_model_weights(args.output_dir / f"{epoch}-{epoch_step}.pt", model)
+
+            should_validate = False
+            event = "step_val"
+            if val_milestones:
+                if next_val_idx < len(val_milestones) and epoch_step == val_milestones[next_val_idx]:
+                    should_validate = True
+                    next_val_idx += 1
+                    if epoch_step == optimizer_steps_per_epoch:
+                        event = "epoch_end_val"
+            elif (global_step % args.eval_every_steps) == 0:
+                should_validate = True
+
+            if not should_validate:
+                return
+
+            val_metrics = evaluate_loss(model, tokenizer, val_loader, device, autocast_dtype, val_max_batches)
+            record: Dict[str, float | int | str] = {
+                "event": event,
+                "epoch": epoch,
+                "epoch_step": epoch_step,
+                "global_step": global_step,
+                "train_loss_running": epoch_loss / max(epoch_batches, 1),
+                "val_loss": val_metrics["loss"],
+                "val_perplexity": val_metrics["perplexity"],
+                "val_batches": val_metrics["batches"],
+            }
+            if event == "epoch_end_val":
+                record["epoch_seconds"] = round(time.time() - start_time, 2)
+            append_metric(metrics_path, record)
+
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                save_checkpoint(best_path, model, optimizer, epoch, global_step, best_val_loss, args)
+            save_checkpoint(args.output_dir / "latest.pt", model, optimizer, epoch, global_step, best_val_loss, args)
 
         for batch in train_loader:
             batch = move_to_device(batch, device)
@@ -231,24 +331,7 @@ def main() -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
-                global_step += 1
-
-                if global_step % args.eval_every_steps == 0:
-                    val_metrics = evaluate_loss(model, tokenizer, val_loader, device, autocast_dtype, args.max_val_batches)
-                    record = {
-                        "epoch": epoch,
-                        "global_step": global_step,
-                        "train_loss_running": epoch_loss / max(epoch_batches, 1),
-                        "val_loss": val_metrics["loss"],
-                        "val_perplexity": val_metrics["perplexity"],
-                    }
-                    with metrics_path.open("a", encoding="utf-8") as fout:
-                        fout.write(json.dumps(record, ensure_ascii=True) + "\n")
-
-                    if val_metrics["loss"] < best_val_loss:
-                        best_val_loss = val_metrics["loss"]
-                        save_checkpoint(args.output_dir / "best.pt", model, optimizer, epoch, global_step, best_val_loss, args)
-                    save_checkpoint(args.output_dir / "latest.pt", model, optimizer, epoch, global_step, best_val_loss, args)
+                after_optimizer_step()
 
                 if args.max_train_steps is not None and global_step >= args.max_train_steps:
                     break
@@ -257,24 +340,29 @@ def main() -> None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-            global_step += 1
+            after_optimizer_step()
 
-        val_metrics = evaluate_loss(model, tokenizer, val_loader, device, autocast_dtype, args.max_val_batches)
-        epoch_record = {
-            "epoch": epoch,
-            "global_step": global_step,
-            "train_loss": epoch_loss / max(epoch_batches, 1),
-            "val_loss": val_metrics["loss"],
-            "val_perplexity": val_metrics["perplexity"],
-            "epoch_seconds": round(time.time() - start_time, 2),
-        }
-        with metrics_path.open("a", encoding="utf-8") as fout:
-            fout.write(json.dumps(epoch_record, ensure_ascii=True) + "\n")
+        if not val_milestones:
+            val_metrics = evaluate_loss(model, tokenizer, val_loader, device, autocast_dtype, val_max_batches)
+            append_metric(
+                metrics_path,
+                {
+                    "event": "epoch_end_val",
+                    "epoch": epoch,
+                    "epoch_step": epoch_step,
+                    "global_step": global_step,
+                    "train_loss_running": epoch_loss / max(epoch_batches, 1),
+                    "val_loss": val_metrics["loss"],
+                    "val_perplexity": val_metrics["perplexity"],
+                    "val_batches": val_metrics["batches"],
+                    "epoch_seconds": round(time.time() - start_time, 2),
+                },
+            )
 
-        if val_metrics["loss"] < best_val_loss:
-            best_val_loss = val_metrics["loss"]
-            save_checkpoint(args.output_dir / "best.pt", model, optimizer, epoch, global_step, best_val_loss, args)
-        save_checkpoint(args.output_dir / "latest.pt", model, optimizer, epoch, global_step, best_val_loss, args)
+            if val_metrics["loss"] < best_val_loss:
+                best_val_loss = val_metrics["loss"]
+                save_checkpoint(best_path, model, optimizer, epoch, global_step, best_val_loss, args)
+            save_checkpoint(args.output_dir / "latest.pt", model, optimizer, epoch, global_step, best_val_loss, args)
 
         if args.max_train_steps is not None and global_step >= args.max_train_steps:
             break

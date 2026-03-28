@@ -17,6 +17,7 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder_runs/`
   - Stores only-decoder training runs, evaluation snapshots, and reusable run/eval helpers for this repository.
   - `decoder_runs/run_only_decoder_eval.py` freezes a selected run checkpoint into a results subdirectory and invokes the existing beam-search retrosynthesis evaluator with consistent naming for snapshot, metrics, and predictions artifacts.
+  - `decoder_runs/run_only_decoder_5epoch.py` orchestrates chained only-decoder training runs across per-epoch subdirectories, starting from the bundled pretrained decoder weights for epoch 1 and resuming each later epoch from the previous epoch's `latest.pt` while sharing a root-level `best.pt`.
 - `USPTO-full/`
   - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
   - This is the canonical local source for the current USPTO reaction data workflow.
@@ -62,7 +63,11 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
   - Fine-tunes the local decoder on retrosynthesis-only-decoder JSONL data.
   - Expects `source_text = product>>` and `target_text = reactants`.
   - Masks the source prefix tokens from the loss and trains only on target-side next-token prediction.
-  - Writes `best.pt`, `latest.pt`, `metrics.jsonl`, and `run_config.json` into the specified output directory.
+  - Supports resuming from a prior training checkpoint via `--resume-checkpoint`.
+  - Supports full-validation checks scheduled by epoch fraction via `--val-checks-per-epoch` together with `--full-val`.
+  - Supports lightweight model-only step snapshots via `--save-every-steps`.
+  - Can write its best checkpoint either inside the epoch directory or to a shared external `--best-path`.
+  - Writes `latest.pt`, `metrics.jsonl`, and `run_config.json` into the specified output directory, and writes `best.pt` either locally or to the configured shared path.
 - `decoder/eval_retrosyn_only_decoder.py`
   - Evaluates a retrosynthesis decoder checkpoint with beam search.
   - Reports top-k exact match, canonicalized reactant match, largest-fragment match, and top-1 invalid-SMILES rate.

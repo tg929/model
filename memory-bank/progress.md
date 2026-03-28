@@ -233,3 +233,24 @@
   - `batch_size` is still under discussion between a conservative `16 x 1` setup and a more aggressive `32 x 1` setup
 - Noted an implementation gap to address before that workflow can exist:
   - the current checked-in trainer still lacks a `--resume-checkpoint` load path even though checkpoints already save `optimizer_state_dict`, `epoch`, `step`, and `best_val_loss`
+
+## 2026-03-27 Chained 5-Epoch Training Workflow
+- Implemented the agreed chained training flow for only-decoder retrosynthesis runs.
+- Updated `decoder/train_retrosyn_only_decoder.py` to support:
+  - `--resume-checkpoint` for continuing from the previous epoch's `latest.pt`
+  - `--full-val` plus `--val-checks-per-epoch` for scheduled full-validation passes within an epoch
+  - `--save-every-steps` for periodic model-only snapshots such as `1-1000.pt`
+  - `--best-path` so multiple per-epoch runs can share one root-level `best.pt`
+- Added `decoder_runs/run_only_decoder_5epoch.py` to orchestrate:
+  - `epoch1` from the bundled pretrained decoder weights
+  - `epoch2` through `epoch5` from the previous epoch's `latest.pt`
+  - one output subdirectory per epoch under a shared experiment root
+  - a shared root-level `best.pt` across the full 5-epoch run
+- Kept the agreed storage policy:
+  - per-epoch `latest.pt` is a full training checkpoint for continuation
+  - root-level `best.pt` is a full training checkpoint
+  - periodic `epoch-step` snapshots are model-only weights for evaluation and downstream inference
+- Verified the new training entry points with:
+  - `conda run -n retrogp python -m py_compile decoder/train_retrosyn_only_decoder.py decoder_runs/run_only_decoder_5epoch.py`
+  - `conda run -n retrogp python decoder/train_retrosyn_only_decoder.py --help`
+  - `conda run -n retrogp python decoder_runs/run_only_decoder_5epoch.py --help`
