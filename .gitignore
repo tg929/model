@@ -14,3 +14,4 @@ USPTO-full/processed_only_decoder/*
 decoder_runs/*
 !decoder_runs/*.py
 decoder_runs/__pycache__/*
+decoder_test_results/*
