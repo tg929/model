@@ -299,7 +299,7 @@ class GPT(nn.Module):
     def beam_search_generate(self, idx, tokenizer, max_new_tokens, beam_width=5,
                              temperature=0.0, top_k=None,  rp=1.0, stream=True,
                              kv_cache=True, is_simulation=False, linker=False,
-                             num_return_sequences=1):
+                             num_return_sequences=1, length_penalty=0.0):
         # 初始化beam：每个候选保存 (score, sequence, ended)
         beam = [(0.0, idx, False)]  # 初始beam包含输入序列
         eos_id = tokenizer.eos_token_id
@@ -339,8 +339,6 @@ class GPT(nn.Module):
                 for i in range(beam_width):
                     new_score = score + top_probs[0, i].item()
                     new_token = top_indices[0, i].view(1, 1)
-                    if ((new_token == 21).sum() + (new_token == 26).sum() + (new_token == 32).sum() != 0): # ?
-                        new_score = -200000
                     new_seq = torch.cat([seq, new_token], dim=1)
                     new_ended = False
                     if linker:
@@ -371,7 +369,8 @@ class GPT(nn.Module):
         for i in range(len(candidates)):
             frag = candidates[i][1]
             star_num = (frag == 256).sum()
-            candidates[i] = (candidates[i][0] - (len(frag) - len(idx)) * 0.2, frag, candidates[i][2])
+            generated_len = frag.shape[1] - idx.shape[1]
+            candidates[i] = (candidates[i][0] - generated_len * length_penalty, frag, candidates[i][2])
             if linker:
                 if (star_num != 4):
                     candidates[i] = (candidates[i][0] - 2000000, frag, candidates[i][2])

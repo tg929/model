@@ -71,6 +71,7 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `decoder/eval_retrosyn_only_decoder.py`
   - Evaluates a retrosynthesis decoder checkpoint with beam search.
   - Reports top-k exact match, canonicalized reactant match, largest-fragment match, and top-1 invalid-SMILES rate.
+  - Now streams prediction rows directly to the requested JSONL output and periodically rewrites the main metrics JSON plus milestone metrics snapshots during long evaluations, so partial progress survives long-running jobs.
 - `decoder/vocabs/vocab.txt`
   - Stores the decoder vocabulary.
 - `decoder/weights/SMILES-650M-3B-Epoch1.pt`

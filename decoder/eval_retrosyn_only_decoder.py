@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import torch
@@ -71,6 +72,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beam-width", type=int, default=10)
     parser.add_argument("--top-ks", type=str, default="1,3,5,10")
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--length-penalty", type=float, default=0.0, help="Per-token beam-score penalty applied after generation. Default 0.0 disables it.")
+    parser.add_argument("--save-every-samples", type=int, default=1000, help="Rewrite the main metrics JSON and save a milestone metrics snapshot every N processed samples.")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     return parser.parse_args()
@@ -94,85 +97,23 @@ def load_checkpoint_model(args: argparse.Namespace):
     return model, tokenizer, device
 
 
-def main() -> None:
-    args = parse_args()
-    top_ks = parse_top_ks(args.top_ks)
-    if args.beam_width < max(top_ks):
-        raise ValueError("beam_width must be at least as large as the largest top-k.")
-
-    model, tokenizer, device = load_checkpoint_model(args)
-
-    total = 0
-    invalid_top1 = 0
-    exact_hits = {k: 0 for k in top_ks}
-    canonical_hits = {k: 0 for k in top_ks}
-    maxfrag_hits = {k: 0 for k in top_ks}
-    prediction_records = []
-
-    with args.data_jsonl.open("r", encoding="utf-8") as fin:
-        for line_idx, line in enumerate(fin):
-            if args.max_samples is not None and line_idx >= args.max_samples:
-                break
-
-            row = json.loads(line)
-            prefix_ids = [tokenizer.bos_token_id] + tokenizer.encode(row["source_text"], add_special_tokens=False)
-            prefix = torch.tensor([prefix_ids], dtype=torch.long, device=device)
-
-            outputs = next(
-                model.beam_search_generate(
-                    prefix,
-                    tokenizer,
-                    max_new_tokens=args.max_new_tokens,
-                    beam_width=args.beam_width,
-                    temperature=0.0,
-                    top_k=None,
-                    rp=1.0,
-                    stream=False,
-                    kv_cache=False,
-                    is_simulation=True,
-                    linker=False,
-                    num_return_sequences=args.beam_width,
-                )
-            )
-
-            predictions = [decode_tensor(tokenizer, item) for item in outputs]
-            exact_target = row["target_text"]
-            canonical_target = canonicalize_reactants(exact_target)
-            maxfrag_target = largest_fragment(exact_target)
-            canonical_predictions = [canonicalize_reactants(pred) for pred in predictions]
-            maxfrag_predictions = [largest_fragment(pred) for pred in predictions]
-
-            total += 1
-            if canonical_predictions and canonical_predictions[0] is None:
-                invalid_top1 += 1
-
-            for k in top_ks:
-                topk_preds = predictions[:k]
-                topk_canonical = canonical_predictions[:k]
-                if exact_target in topk_preds:
-                    exact_hits[k] += 1
-                if canonical_target is not None and canonical_target in topk_canonical:
-                    canonical_hits[k] += 1
-                if maxfrag_target is not None and maxfrag_target in maxfrag_predictions[:k]:
-                    maxfrag_hits[k] += 1
-
-            if args.predictions_jsonl is not None:
-                prediction_records.append(
-                    {
-                        "product": row["product"],
-                        "target_text": exact_target,
-                        "canonical_target": canonical_target,
-                        "maxfrag_target": maxfrag_target,
-                        "predictions": predictions,
-                        "canonical_predictions": canonical_predictions,
-                        "maxfrag_predictions": maxfrag_predictions,
-                    }
-                )
-
-    metrics = {
+def build_metrics(
+    args: argparse.Namespace,
+    total: int,
+    top_ks: list[int],
+    exact_hits: dict[int, int],
+    canonical_hits: dict[int, int],
+    maxfrag_hits: dict[int, int],
+    invalid_top1: int,
+    completed: bool,
+) -> dict:
+    return {
         "num_samples": total,
         "beam_width": args.beam_width,
         "top_ks": top_ks,
+        "length_penalty": args.length_penalty,
+        "save_every_samples": args.save_every_samples,
+        "completed": completed,
         "topk_exact_match": {str(k): exact_hits[k] / total if total else 0.0 for k in top_ks},
         "topk_canonical_match": {str(k): canonical_hits[k] / total if total else 0.0 for k in top_ks},
         "topk_maxfrag_match": {str(k): maxfrag_hits[k] / total if total else 0.0 for k in top_ks},
@@ -181,16 +122,127 @@ def main() -> None:
         "data_jsonl": str(args.data_jsonl),
     }
 
-    args.output_json.parent.mkdir(parents=True, exist_ok=True)
-    with args.output_json.open("w", encoding="utf-8") as fout:
+
+def metrics_snapshot_path(path: Path, total: int) -> Path:
+    return path.with_name(f"{path.stem}_up_to_{total}{path.suffix}")
+
+
+def write_metrics(path: Path, metrics: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fout:
         json.dump(metrics, fout, indent=2, ensure_ascii=True)
         fout.write("\n")
 
+
+def main() -> None:
+    args = parse_args()
+    top_ks = parse_top_ks(args.top_ks)
+    if args.beam_width < max(top_ks):
+        raise ValueError("beam_width must be at least as large as the largest top-k.")
+    if args.save_every_samples is not None and args.save_every_samples < 1:
+        raise ValueError("--save-every-samples must be at least 1.")
+
+    model, tokenizer, device = load_checkpoint_model(args)
+
+    total = 0
+    invalid_top1 = 0
+    exact_hits = {k: 0 for k in top_ks}
+    canonical_hits = {k: 0 for k in top_ks}
+    maxfrag_hits = {k: 0 for k in top_ks}
+    args.output_json.parent.mkdir(parents=True, exist_ok=True)
     if args.predictions_jsonl is not None:
         args.predictions_jsonl.parent.mkdir(parents=True, exist_ok=True)
-        with args.predictions_jsonl.open("w", encoding="utf-8") as fout:
-            for row in prediction_records:
-                fout.write(json.dumps(row, ensure_ascii=True) + "\n")
+
+    predictions_fout = None
+    try:
+        if args.predictions_jsonl is not None:
+            predictions_fout = args.predictions_jsonl.open("w", encoding="utf-8", buffering=1)
+
+        with args.data_jsonl.open("r", encoding="utf-8") as fin:
+            for line_idx, line in enumerate(fin):
+                if args.max_samples is not None and line_idx >= args.max_samples:
+                    break
+
+                row = json.loads(line)
+                prefix_ids = [tokenizer.bos_token_id] + tokenizer.encode(row["source_text"], add_special_tokens=False)
+                prefix = torch.tensor([prefix_ids], dtype=torch.long, device=device)
+
+                outputs = next(
+                    model.beam_search_generate(
+                        prefix,
+                        tokenizer,
+                        max_new_tokens=args.max_new_tokens,
+                        beam_width=args.beam_width,
+                        temperature=0.0,
+                        top_k=None,
+                        rp=1.0,
+                        stream=False,
+                        kv_cache=False,
+                        is_simulation=True,
+                        linker=False,
+                        num_return_sequences=args.beam_width,
+                        length_penalty=args.length_penalty,
+                    )
+                )
+
+                predictions = [decode_tensor(tokenizer, item) for item in outputs]
+                exact_target = row["target_text"]
+                canonical_target = canonicalize_reactants(exact_target)
+                maxfrag_target = largest_fragment(exact_target)
+                canonical_predictions = [canonicalize_reactants(pred) for pred in predictions]
+                maxfrag_predictions = [largest_fragment(pred) for pred in predictions]
+
+                total += 1
+                if canonical_predictions and canonical_predictions[0] is None:
+                    invalid_top1 += 1
+
+                for k in top_ks:
+                    topk_preds = predictions[:k]
+                    topk_canonical = canonical_predictions[:k]
+                    if exact_target in topk_preds:
+                        exact_hits[k] += 1
+                    if canonical_target is not None and canonical_target in topk_canonical:
+                        canonical_hits[k] += 1
+                    if maxfrag_target is not None and maxfrag_target in maxfrag_predictions[:k]:
+                        maxfrag_hits[k] += 1
+
+                if predictions_fout is not None:
+                    predictions_fout.write(
+                        json.dumps(
+                            {
+                                "product": row["product"],
+                                "target_text": exact_target,
+                                "canonical_target": canonical_target,
+                                "maxfrag_target": maxfrag_target,
+                                "predictions": predictions,
+                                "canonical_predictions": canonical_predictions,
+                                "maxfrag_predictions": maxfrag_predictions,
+                            },
+                            ensure_ascii=True,
+                        )
+                        + "\n"
+                    )
+
+                if args.save_every_samples is not None and total % args.save_every_samples == 0:
+                    if predictions_fout is not None:
+                        predictions_fout.flush()
+                        os.fsync(predictions_fout.fileno())
+                    metrics = build_metrics(args, total, top_ks, exact_hits, canonical_hits, maxfrag_hits, invalid_top1, completed=False)
+                    write_metrics(args.output_json, metrics)
+                    write_metrics(metrics_snapshot_path(args.output_json, total), metrics)
+                    print(json.dumps({"event": "progress_save", "num_samples": total, "output_json": str(args.output_json)}, ensure_ascii=True))
+
+        if predictions_fout is not None:
+            predictions_fout.flush()
+            os.fsync(predictions_fout.fileno())
+    finally:
+        if predictions_fout is not None:
+            predictions_fout.close()
+
+    metrics = build_metrics(args, total, top_ks, exact_hits, canonical_hits, maxfrag_hits, invalid_top1, completed=True)
+    write_metrics(args.output_json, metrics)
+    if args.save_every_samples is None or total % args.save_every_samples != 0:
+        write_metrics(metrics_snapshot_path(args.output_json, total), metrics)
 
     print(json.dumps(metrics, indent=2, ensure_ascii=True))
 

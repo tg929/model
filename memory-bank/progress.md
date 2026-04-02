@@ -265,3 +265,74 @@
 
 ## 2026-03-28 Git Tracking For Decoder Run Scripts
 - Updated `.gitignore` so `decoder_runs/` keeps ignoring run artifacts and checkpoints while allowing top-level Python helpers such as `decoder_runs/run_only_decoder_eval.py` and `decoder_runs/run_only_decoder_5epoch.py` to be tracked by git.
+
+## 2026-04-02 Decoder Retrosynthesis Beam-Search Diagnosis
+- Reviewed the current only-decoder retrosynthesis path end-to-end without changing model code:
+  - data extraction in `USPTO-full/extract_retrosyn_data.py`
+  - only-decoder dataset building in `USPTO-full/prepare_only_decoder_data.py`
+  - training in `decoder/train_retrosyn_only_decoder.py`
+  - beam-search evaluation in `decoder/eval_retrosyn_only_decoder.py`
+- Reconfirmed the current processed dataset summary:
+  - `num_pair_rows=632053`
+  - `train/val/test=505641/63206/63206`
+  - product overlap across splits remains zero
+- Rechecked the `decoder_runs/only_decoder_650m_10epoch` training chain and confirmed the teacher-forced validation best checkpoint is still the epoch-4 run:
+  - `best.pt` metadata points to `epoch=4`
+  - `step=126412`
+  - `best_val_loss=0.11964837710439812`
+- Rechecked the current 1000-sample evaluation snapshot under `decoder_test_results/test1000_epoch4_/` and confirmed the stored metrics:
+  - top-1 exact `0.145`
+  - top-10 exact `0.255`
+- Diagnosed a major beam-search implementation issue in `decoder/model.py`:
+  - the current search path hard-penalizes token ids `21`, `26`, and `32`
+  - in the current decoder vocab these correspond to SMILES ring digits `2`, `3`, and `4`
+- Quantified the impact of that beam-search heuristic on the existing 1000-sample predictions:
+  - `557 / 1000` targets contain `2`, `3`, or `4`
+  - those `557` samples currently have `0` exact matches at top-1, top-3, top-5, and top-10
+  - only `1 / 1000` samples has any top-10 prediction containing `2`, `3`, or `4`
+  - among the remaining `443` targets without `2/3/4`, current exact-match rates are:
+    - top-1 `145/443 = 0.327`
+    - top-10 `255/443 = 0.576`
+- Reconfirmed a second beam-search concern:
+  - the implementation applies a fixed post-hoc length penalty of `0.2` per generated token
+  - this biases search toward shorter reactant strings even though exact retrosynthesis targets are often multi-fragment and longer
+- Measured supporting diagnostics from the stored 1000-sample predictions:
+  - average target char length `46.854`
+  - average top-1 prediction char length `43.298`
+  - average target fragment count `1.867`
+  - average top-1 prediction fragment count `2.102`
+  - allowing any known target for the same product only raises top-1 exact from `0.145` to `0.161`, so dataset multi-solution ambiguity is not the main cause of the low score
+- Added a standalone project document at `/data1/ytg/model/decoder逆合成任务修复.md` that records:
+  - the current only-decoder retrosynthesis pipeline
+  - the beam-search diagnosis
+  - why the current search heuristics conflict with the retrosynthesis task
+  - the recommended repair order before further model conclusions are drawn
+
+## 2026-04-02 Decoder Retrosynthesis Beam-Search First Fix
+- Implemented the first-pass beam-search cleanup for retrosynthesis evaluation.
+- Updated `decoder/model.py` to:
+  - remove the hard-coded score collapse on token ids `21`, `26`, and `32`
+  - expose beam-search `length_penalty` as an explicit argument with default `0.0`
+  - compute generated length via `shape[1]` instead of `len(tensor)`, making the length penalty semantics explicit and correct when enabled
+- Updated `decoder/eval_retrosyn_only_decoder.py` to:
+  - accept `--length-penalty`
+  - forward that value into `model.beam_search_generate(...)`
+  - write the chosen `length_penalty` into the output metrics JSON
+- Updated `decoder_runs/run_only_decoder_eval.py` to forward `--length-penalty` into the eval command so future experiment reruns can reproduce either:
+  - clean default search with `0.0`
+  - or any later experimental non-zero value explicitly
+- Verified the code changes with:
+  - `conda run -n retrogp python -m py_compile decoder/model.py decoder/eval_retrosyn_only_decoder.py decoder_runs/run_only_decoder_eval.py`
+  - `conda run -n retrogp python decoder/eval_retrosyn_only_decoder.py --help`
+  - `conda run -n retrogp python decoder_runs/run_only_decoder_eval.py --help`
+
+## 2026-04-02 Decoder Eval Incremental Persistence
+- Updated `decoder/eval_retrosyn_only_decoder.py` so long-running retrosynthesis evaluations no longer keep all prediction rows only in memory until process exit.
+- The eval script now:
+  - streams each prediction row directly into the requested `predictions_jsonl`
+  - rewrites the main metrics JSON every `N` processed samples
+  - writes milestone metrics snapshots named like `*_up_to_1000.json`, `*_up_to_2000.json`, and so on
+  - marks metrics payloads with `completed=false/true` so partial and final outputs are distinguishable
+- Added `--save-every-samples` to `decoder/eval_retrosyn_only_decoder.py` with default `1000`.
+- Added the same `--save-every-samples` passthrough to `decoder_runs/run_only_decoder_eval.py`.
+- Updated `memory-bank/architecture.md` to note that eval now persists partial progress during long runs.

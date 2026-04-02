@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beam-width", type=int, default=10)
     parser.add_argument("--top-ks", type=str, default="1,3,5,10")
     parser.add_argument("--max-new-tokens", type=int, default=256)
+    parser.add_argument("--length-penalty", type=float, default=0.0)
+    parser.add_argument("--save-every-samples", type=int, default=1000)
     parser.add_argument("--max-samples", type=int, default=100)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--dry-run", action="store_true", help="Print the resolved paths and eval command without running it.")
@@ -85,6 +87,10 @@ def main() -> None:
         args.top_ks,
         "--max-new-tokens",
         str(args.max_new_tokens),
+        "--length-penalty",
+        str(args.length_penalty),
+        "--save-every-samples",
+        str(args.save_every_samples),
         "--device",
         args.device,
     ]
