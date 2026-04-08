@@ -14,6 +14,12 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `AGENTS.md`: instructs future coding agents to read the memory bank first, work incrementally, and keep the docs updated.
 
 ## Data Workspaces
+- `decoder_test_results/`
+  - Stores evaluation outputs, long-form analysis notes, reranker artifacts, and audit records tied to specific evaluation result directories.
+  - `decoder_test_results/testall_epoch4_beamfix/` currently contains the full beam-fixed evaluation outputs for the present best only-decoder checkpoint together with:
+    - `analysis_report.md` for the full-test written analysis
+    - `reranker_v1/` as the planned home for the first-pass reranker input/output artifacts
+    - `audits/` as the planned home for structured `THF / Et3N` audit sample manifests and human-reviewed audit tables
 - `decoder_runs/`
   - Stores only-decoder training runs, evaluation snapshots, and reusable run/eval helpers for this repository.
   - `decoder_runs/run_only_decoder_eval.py` freezes a selected run checkpoint into a results subdirectory and invokes the existing beam-search retrosynthesis evaluator with consistent naming for snapshot, metrics, and predictions artifacts.

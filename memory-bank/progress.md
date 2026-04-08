@@ -336,3 +336,106 @@
 - Added `--save-every-samples` to `decoder/eval_retrosyn_only_decoder.py` with default `1000`.
 - Added the same `--save-every-samples` passthrough to `decoder_runs/run_only_decoder_eval.py`.
 - Updated `memory-bank/architecture.md` to note that eval now persists partial progress during long runs.
+
+## 2026-04-08 Full-Test Analysis Report
+- Added a standalone written analysis report for the full beam-fixed retrosynthesis evaluation at:
+  - `decoder_test_results/testall_epoch4_beamfix/analysis_report.md`
+- Consolidated the current full-test findings from:
+  - `decoder_test_results/testall_epoch4_beamfix/testall_best_metrics.json`
+  - `decoder_test_results/testall_epoch4_beamfix/testall_best_predictions.jsonl`
+  - `USPTO-full/processed_only_decoder/test.jsonl`
+- Recorded the main evaluation conclusions:
+  - full-test exact-match performance is `top1=0.4007`, `top10=0.6291`
+  - `top1 maxfrag=0.4840` indicates many failures still preserve the main reactant scaffold while missing the full precursor set
+  - beam search adds substantial value because many exact hits already appear in `top3/top10`, suggesting reranking is a high-return next step
+  - `3+` component targets remain the dominant hard case, with performance collapsing relative to `1-2` component targets
+  - low-frequency and older-patent samples are substantially harder than frequent and newer samples
+- Recorded a strong data-quality signal:
+  - a noticeable subset of targets includes solvent/base-like molecules such as `CCN(CC)CC`, `C1CCOC1`, and `CN(C)C=O`
+  - those samples underperform the rest of the test set sharply, suggesting extraction-boundary noise rather than purely model-capacity limits
+- Recommended next priorities in the report:
+  - reranking over existing beam candidates
+  - targeted label/data cleaning for suspicious non-contributing reactant components
+  - separate treatment of `3+` component retrosynthesis targets before further epoch-scaling conclusions
+
+## 2026-04-08 Next-Step Priorities And Cleaning List
+- Added a new living discussion document at:
+  - `retrosyn_next_step_priorities.md`
+- Turned the earlier verbal recommendation into a persistent project record with:
+  - the agreed priority order `reranker -> data cleaning -> more epochs later`
+  - the quantitative justification for prioritizing reranking from the current full-test top-k gaps
+  - a concrete suspicious-target review shortlist covering Et3N, THF, DMF, DIPEA, diethyl ether, ethyl acetate, ethanol, and methanol
+  - per-molecule sample counts, hit rates, and example `first_id` review entries from `USPTO-full/processed_only_decoder/test.jsonl`
+  - a discussion-sync section listing current agreed points, open questions, and the rule that future decisions should be synced into both this living document and `memory-bank/progress.md`
+- Recorded the intended near-term discussion scope:
+  - first-round audit should focus on the `P0` suspicious molecules rather than trying to solve all label-boundary cases at once
+  - reranker evaluation should be framed as a pure reordering test on the existing beam candidates before any new training cycle is interpreted
+
+## 2026-04-08 Working Discussion Decisions
+- Updated `retrosyn_next_step_priorities.md` with the current working plan for the next discussion round.
+- Recorded the current reranker direction:
+  - `v1 reranker` should stay a clean baseline that only reorders existing beam candidates
+  - use decoder teacher-forced conditional scoring with target-side length normalization
+  - do not mix in handcrafted chemical priors or extra learned features in `v1`
+- Recorded the current first-pass data-audit direction:
+  - start the `P0` suspicious-target review from `THF` and `Et3N`
+  - use them as the first two probe classes because they represent solvent-like and organic-base-like boundary failures with both high suspicion and enough sample volume
+  - the suggested minimum audit slice is `50` top-1 errors plus `20` hits for each of `THF` and `Et3N`
+- Added the rationale behind the current reranker scoring plan into the living document:
+  - `target-side mean log-prob` is the preferred `v1` main score because it aligns with the current masked target-side training objective and removes the strongest raw length bias
+  - `target-side sum log-prob` should remain as the main control score because it represents the model's raw joint conditional probability for the full candidate sequence
+  - no component-count penalty, suspicious-molecule penalty, or external chemistry features should be mixed into `v1`, to keep the first reranker result interpretable and separable from data-cleaning effects
+- Extended the reranker discussion record with the current stance on terminal scoring:
+  - `EOS` should likely be included in the `v1` target-side mean-log-prob score
+  - the main rationale is that the current decoder is trained on `target + EOS`, so including `EOS` scores complete-sequence likelihood rather than only target-prefix likelihood
+  - a `no-EOS` variant should still be kept as an ablation so later comparisons can isolate how much of the reranker gain comes from modeling the stop decision itself
+
+## 2026-04-08 Locked V1 Reranker Score Set
+- Promoted the current reranker-scoring preference into an explicit locked `v1` discussion result in `retrosyn_next_step_priorities.md`.
+- Fixed the `v1` score set to:
+  - main score: `mean(target + EOS)`
+  - first control: `mean(target)`
+  - second control: `sum(target + EOS)`
+- Recorded the intended interpretation:
+  - main score measures average confidence over the full completed candidate sequence
+  - `mean(target)` isolates the contribution of stop-position scoring
+  - `sum(target + EOS)` isolates the effect of removing raw length bias
+- Recorded that `v1` should no longer reopen:
+  - whether `EOS` belongs in the main score
+  - whether `sum(target)` should replace the chosen control set
+  - whether rule penalties or extra chemistry features should be mixed into the first reranker baseline
+
+## 2026-04-08 Reranker And Audit Implementation Details
+- Extended `retrosyn_next_step_priorities.md` with the concrete implementation rules for `mean(target + EOS)`:
+  - every candidate should be rescored as `candidate_text + EOS`, regardless of whether the original beam output explicitly ended with `EOS`
+  - generation-truncated candidates should not get an extra handcrafted penalty in `v1`; the appended `EOS` probability is expected to penalize incomplete candidates naturally
+  - scoring-overflow candidates must not be silently clipped; if they cannot be fully rescored they should be marked failed and pushed to the bottom
+  - the `mean(target + EOS)` denominator is fixed to `len(target_ids) + 1`
+- Reworked the first-pass `THF / Et3N` audit plan into a structured review template with fields for:
+  - sample bucket
+  - molecule-specific judgment
+  - target action
+  - root-cause hypothesis
+  - notes
+- Corrected the earlier informal audit sampling idea after checking actual hit counts:
+  - `THF` top-1 hits are too rare for a fixed “20 hit samples” plan
+  - the first-pass audit should instead use adaptive sampling over `top1_hit`, `top1_miss_top10_hit`, and `top10_miss`
+- Recorded the intended writeback order:
+  - first use audit results to build a clean audited subset
+  - only after clear root-cause concentration should those findings be promoted into extraction-rule changes
+
+## 2026-04-08 Reranker IO And Audit File Layout
+- Locked the `v1 reranker` artifact layout in `retrosyn_next_step_priorities.md`:
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_input.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_scored.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_metrics.json`
+- Recorded the format rationale:
+  - reranker input/output stay sample-level `JSONL` because beam candidates and score arrays are nested structures
+  - reranker metrics stay single-object `JSON` to match the existing eval metrics style
+- Locked the first-pass `THF / Et3N` audit file layout:
+  - sampled case manifest: `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_cases.jsonl`
+  - human annotation table: `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_audit.csv`
+- Recorded the format rationale:
+  - the sampled case manifest should stay `JSONL` because it carries nested context such as `top10_predictions`
+  - the human audit table should be `CSV` because it is a flat manually edited annotation table
+- Updated `memory-bank/architecture.md` to document `decoder_test_results/` as an explicit workspace for evaluation outputs, reranker artifacts, and audit records.
