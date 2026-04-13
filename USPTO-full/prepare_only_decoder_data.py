@@ -8,9 +8,9 @@ import random
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Set
 
-from extract_retrosyn_data import mapped_precursors
+from extract_retrosyn_data import AUDIT_V1_PROCESS_MOLECULES, mapped_precursors
 
 
 ROOT = Path(__file__).resolve().parent
@@ -19,6 +19,7 @@ DECODER_ROOT = PROJECT_ROOT / "decoder"
 DEFAULT_INPUT = ROOT / "uspto_data.csv"
 DEFAULT_OUTPUT_DIR = ROOT / "processed_only_decoder"
 DEFAULT_DECODER_VOCAB = DECODER_ROOT / "vocabs" / "vocab.txt"
+DEFAULT_PROGRESS_EVERY = 1000
 
 sys.path.insert(0, str(PROJECT_ROOT))
 from decoder.tokenizer import SmilesTokenizer  # noqa: E402
@@ -39,9 +40,27 @@ def build_decoder_tokenizer(vocab_path: Path) -> SmilesTokenizer:
     return tokenizer
 
 
-def aggregate_from_source(input_path: Path, raw_path: Path, tokenizer: SmilesTokenizer) -> tuple[int, List[dict]]:
+def write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as fout:
+        json.dump(payload, fout, indent=2, ensure_ascii=True)
+        fout.write("\n")
+    tmp.replace(path)
+
+
+def aggregate_from_source(
+    input_path: Path,
+    raw_path: Path,
+    tokenizer: SmilesTokenizer,
+    process_molecule_blocklist: Optional[Set[str]] = None,
+    progress_every: int = 0,
+    progress_json: Optional[Path] = None,
+    progress_context: Optional[dict] = None,
+) -> tuple[int, List[dict], int]:
     grouped: Dict[tuple, dict] = {}
     extracted_rows = 0
+    processed_rows = 0
     raw_fieldnames = ["id", "patent_id", "year", "product", "reactants", "raw_reaction"]
 
     with input_path.open("r", newline="", encoding="utf-8") as fin, raw_path.open("w", newline="", encoding="utf-8") as fout:
@@ -50,12 +69,29 @@ def aggregate_from_source(input_path: Path, raw_path: Path, tokenizer: SmilesTok
         writer.writeheader()
 
         for source_row in reader:
+            processed_rows += 1
             reaction_id = source_row["ID"]
             year = int(source_row["Year"])
             patent_id = reaction_id.split(";;", 1)[0]
             raw_reaction = source_row["ReactionSmiles"]
-            result = mapped_precursors(raw_reaction)
+            result = mapped_precursors(
+                raw_reaction,
+                process_molecule_blocklist=process_molecule_blocklist,
+            )
             if result is None:
+                if progress_json is not None and progress_every > 0 and processed_rows % progress_every == 0:
+                    fout.flush()
+                    payload = {
+                        "status": "running",
+                        "stage": "aggregate_from_source",
+                        "processed_source_rows": processed_rows,
+                        "extracted_rows": extracted_rows,
+                        "grouped_pair_rows_so_far": len(grouped),
+                        "progress_every": int(progress_every),
+                    }
+                    if progress_context:
+                        payload.update(progress_context)
+                    write_json_atomic(progress_json, payload)
                 continue
 
             product, reactants = result
@@ -102,11 +138,25 @@ def aggregate_from_source(input_path: Path, raw_path: Path, tokenizer: SmilesTok
             bucket["min_year"] = min(bucket["min_year"], year)
             bucket["max_year"] = max(bucket["max_year"], year)
 
+            if progress_json is not None and progress_every > 0 and processed_rows % progress_every == 0:
+                fout.flush()
+                payload = {
+                    "status": "running",
+                    "stage": "aggregate_from_source",
+                    "processed_source_rows": processed_rows,
+                    "extracted_rows": extracted_rows,
+                    "grouped_pair_rows_so_far": len(grouped),
+                    "progress_every": int(progress_every),
+                }
+                if progress_context:
+                    payload.update(progress_context)
+                write_json_atomic(progress_json, payload)
+
     pair_rows = sorted(
         grouped.values(),
         key=lambda row: (row["product"], row["reactants"], row["first_year"], row["first_id"]),
     )
-    return extracted_rows, pair_rows
+    return extracted_rows, pair_rows, processed_rows
 
 
 def assign_product_splits(
@@ -236,6 +286,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--test-ratio", type=float, default=0.1)
     parser.add_argument("--max-sequence-token-len", type=int, default=256)
     parser.add_argument("--keep-unk", action="store_true", help="Keep rows containing [UNK] tokens instead of filtering them out.")
+    parser.add_argument(
+        "--apply-audit-v1-fix",
+        action="store_true",
+        help=(
+            "Enable the audited leakage filter profile that removes mapped THF/Et3N "
+            "when they are absent from the demapped product."
+        ),
+    )
+    parser.add_argument(
+        "--process-molecule-smiles",
+        action="append",
+        default=[],
+        help=(
+            "Add extra demapped canonical SMILES to the process-molecule blocklist. "
+            "Can be specified multiple times."
+        ),
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=DEFAULT_PROGRESS_EVERY,
+        help="Rewrite progress JSON every N source rows during aggregation. Use 0 to disable periodic writes.",
+    )
+    parser.add_argument(
+        "--progress-json",
+        type=Path,
+        default=None,
+        help="Path for incremental progress JSON. Defaults to <output-dir>/prepare_only_decoder_data.progress.json.",
+    )
     return parser.parse_args()
 
 
@@ -246,12 +325,57 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tokenizer = build_decoder_tokenizer(args.decoder_vocab)
+    process_molecule_blocklist: Set[str] = set()
+    if args.apply_audit_v1_fix:
+        process_molecule_blocklist.update(AUDIT_V1_PROCESS_MOLECULES)
+    if args.process_molecule_smiles:
+        process_molecule_blocklist.update(args.process_molecule_smiles)
+    progress_json = args.progress_json or (args.output_dir / "prepare_only_decoder_data.progress.json")
+    progress_context = {
+        "input": str(args.input),
+        "output_dir": str(args.output_dir),
+        "apply_audit_v1_fix": bool(args.apply_audit_v1_fix),
+        "process_molecule_blocklist": sorted(process_molecule_blocklist),
+    }
+    write_json_atomic(
+        progress_json,
+        {
+            **progress_context,
+            "status": "running",
+            "stage": "start",
+            "progress_every": int(args.progress_every),
+            "processed_source_rows": 0,
+            "extracted_rows": 0,
+            "grouped_pair_rows_so_far": 0,
+        },
+    )
 
     raw_path = args.output_dir / "retrosyn_with_meta.csv"
     print("extracting rows from source dataset and aggregating pairs...")
-    extracted_row_count, pair_rows = aggregate_from_source(args.input, raw_path, tokenizer)
+    extracted_row_count, pair_rows, processed_source_rows = aggregate_from_source(
+        args.input,
+        raw_path,
+        tokenizer,
+        process_molecule_blocklist=process_molecule_blocklist,
+        progress_every=args.progress_every,
+        progress_json=progress_json,
+        progress_context=progress_context,
+    )
     print(f"extracted_rows={extracted_row_count}")
     print(f"wrote={raw_path}")
+    write_json_atomic(
+        progress_json,
+        {
+            **progress_context,
+            "status": "running",
+            "stage": "post_aggregate",
+            "progress_every": int(args.progress_every),
+            "processed_source_rows": processed_source_rows,
+            "extracted_rows": extracted_row_count,
+            "grouped_pair_rows_so_far": len(pair_rows),
+            "num_pair_rows_before_filter": len(pair_rows),
+        },
+    )
     filtered_pair_rows, dropped_pair_rows = filter_pair_rows(
         pair_rows,
         max_sequence_token_len=args.max_sequence_token_len,
@@ -318,6 +442,10 @@ def main() -> None:
     summary["num_extracted_rows"] = extracted_row_count
     summary["num_pair_rows_before_filter"] = len(pair_rows)
     summary["num_pair_rows_dropped"] = len(dropped_pair_rows)
+    summary["apply_audit_v1_fix"] = bool(args.apply_audit_v1_fix)
+    summary["process_molecule_blocklist"] = sorted(process_molecule_blocklist)
+    summary["progress_every"] = int(args.progress_every)
+    summary["progress_json"] = str(progress_json)
     summary["dropped_frequency_mass"] = sum(row["count"] for row in dropped_pair_rows)
     summary["seed"] = args.seed
     summary["ratios"] = {
@@ -334,6 +462,21 @@ def main() -> None:
         json.dump(summary, fout, indent=2, ensure_ascii=True)
         fout.write("\n")
     print(f"wrote={summary_path}")
+    write_json_atomic(
+        progress_json,
+        {
+            **progress_context,
+            "status": "completed",
+            "stage": "done",
+            "progress_every": int(args.progress_every),
+            "processed_source_rows": processed_source_rows,
+            "extracted_rows": extracted_row_count,
+            "num_pair_rows_before_filter": len(pair_rows),
+            "num_pair_rows": len(filtered_pair_rows),
+            "num_pair_rows_dropped": len(dropped_pair_rows),
+            "summary_json": str(summary_path),
+        },
+    )
     print(json.dumps(summary, indent=2, ensure_ascii=True))
 
 
