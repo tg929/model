@@ -19,3 +19,5 @@ decoder_test_results/*
 *.png
 nag2g.txt
 .codex
+USPTO_50K-mbera/*
+schneider50k

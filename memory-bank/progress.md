@@ -761,3 +761,27 @@
   - deleted all `testall_best_metrics_resume_part_up_to_*.json`
   - deleted stale remaining-slice file `test_remaining_from_25096.jsonl`
   - deleted stale resume logs/backups that belonged to the wrong local-slice run
+
+## 2026-04-13 Schneider50k Known-Class Split Build
+- Added a reproducible converter script:
+  - `schneider50k/build_typed_splits.py`
+- Script behavior:
+  - reads unknown-class `raw_train.csv`, `raw_val.csv`, `raw_test.csv` under `schneider50k/`
+  - loads public class mapping from Retrosim:
+    - `https://raw.githubusercontent.com/connorcoley/retrosim/master/retrosim/data/data_processed.csv`
+  - keeps only `keep=True` rows from the mapping source
+  - fills `class` using exact key `(id, reactants>reagents>production)`
+  - writes known-class outputs:
+    - `schneider50k/typed_train.csv`
+    - `schneider50k/typed_val.csv`
+    - `schneider50k/typed_test.csv`
+  - writes conversion report:
+    - `schneider50k/typed_build_summary.json`
+- Run result on current local files:
+  - input unknown rows: `50016` (`40008/5001/5007`)
+  - mapping keys used: `49961`
+  - missing mappings: `0`
+  - output known-class rows: `50016` with class coverage `1..10`
+- Verified integrity:
+  - typed files preserve row count, `id`, and reaction string order vs corresponding raw files
+  - no `UNK` class values remain in typed outputs

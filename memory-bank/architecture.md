@@ -34,6 +34,11 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `USPTO-full/`
   - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
   - This is the canonical local source for the current USPTO reaction data workflow.
+- `schneider50k/`
+  - Stores local USPTO-50k benchmark split files and conversion helpers.
+  - `raw_train.csv`, `raw_val.csv`, `raw_test.csv` are the unknown-class version (`class=UNK`).
+  - `build_typed_splits.py` fills known reaction classes (`1..10`) by exact-key mapping against the public Retrosim `data_processed.csv`.
+  - `typed_train.csv`, `typed_val.csv`, `typed_test.csv` are generated known-class outputs that preserve row order and split membership.
 - `.metaflow/`
   - Stores local execution metadata for the USPTO preparation workflow.
   - Currently contains records for `UsptoDataPreparationFlow`, which produced the checked-in `USPTO-full/` data artifacts.
