@@ -19,11 +19,18 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
   - `decoder_test_results/testall_epoch4_beamfix/` currently contains the full beam-fixed evaluation outputs for the present best only-decoder checkpoint together with:
     - `analysis_report.md` for the full-test written analysis
     - `reranker_v1/` as the planned home for the first-pass reranker input/output artifacts
-    - `audits/` as the planned home for structured `THF / Et3N` audit sample manifests and human-reviewed audit tables
+    - `audits/` as the working home for structured `THF / Et3N` audit sample manifests, human-reviewed audit tables, enriched audit context JSONL, and audit-driven clean-subset evaluation artifacts
 - `decoder_runs/`
   - Stores only-decoder training runs, evaluation snapshots, and reusable run/eval helpers for this repository.
   - `decoder_runs/run_only_decoder_eval.py` freezes a selected run checkpoint into a results subdirectory and invokes the existing beam-search retrosynthesis evaluator with consistent naming for snapshot, metrics, and predictions artifacts.
   - `decoder_runs/run_only_decoder_5epoch.py` orchestrates chained only-decoder training runs across per-epoch subdirectories, can start a fresh experiment from the bundled pretrained decoder weights, and can continue an existing experiment from an arbitrary `start_epoch` plus resume checkpoint while sharing one root-level `best.pt`.
+  - `decoder_runs/build_reranker_v1_input.py` converts the current full-test predictions plus test-set metadata into the sample-level `JSONL` input expected by the first-pass reranker workflow.
+  - `decoder_runs/build_audit_context.py` joins the sampled `THF / Et3N` audit cases with test-set metadata, example raw reactions, and reranker outputs to produce a richer JSONL review context for manual auditing.
+  - `decoder_runs/eval_audited_clean_subset.py` turns a filled audit CSV into an effective-target subset JSONL plus clean-subset metrics for baseline beam order and reranker variants.
+  - `decoder_runs/render_clean_subset_report.py` renders a fixed-format markdown report from the clean-subset metrics JSON, including locked reporting-caliber sections and extraction-fix profile notes.
+  - `decoder_runs/render_clean_subset_report.py` also supports incremental progress snapshots via `--progress-every` and `--progress-json` while scanning large audit CSV files.
+  - `decoder_runs/score_reranker_v1.py` teacher-forces each beam candidate under the current decoder checkpoint and writes per-sample reranker scores plus reranked metrics artifacts.
+  - `decoder_runs/sample_thf_et3n_audit_cases.py` builds the first-pass `THF / Et3N` audit sample manifest and initializes the paired human-review CSV table.
 - `USPTO-full/`
   - Stores the correct USPTO download, mapping outputs, and retrosynthesis-extraction scripts for this repository.
   - This is the canonical local source for the current USPTO reaction data workflow.
@@ -98,6 +105,10 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `USPTO-full/extract_retrosyn_data.py`
   - Standalone script that reads `uspto_data.csv` and writes `retrosyn_data.csv` in the same folder.
   - Parses atom-mapped `ReactionSmiles`, keeps only single-product reactions with a parseable mapped product and at least one precursor molecule sharing atom-map IDs with the product, removes atom-mapping numbers, canonicalizes SMILES, sorts precursor components, and writes `product`, `reactants`, and `raw_reaction`.
+  - Now exposes CLI arguments for `--input`, `--output`, and extraction-policy controls.
+  - Supports an optional audited leakage filter profile (`--apply-audit-v1-fix`) that drops mapped `THF` (`C1CCOC1`) and `Et3N` (`CCN(CC)CC`) from extracted reactants when those molecules are absent from the demapped product.
+  - Supports additional process-molecule blocklist extension through repeated `--process-molecule-smiles`.
+  - Supports incremental progress snapshots via `--progress-every` and `--progress-json` so long extraction runs can persist counters every N rows.
   - The agreed task definition behind this script is single-step retrosynthesis:
     - input: `product`, as de-mapped canonical product SMILES
     - target: `reactants`, as de-mapped canonical true precursor SMILES joined by `.`
@@ -112,6 +123,9 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
 - `USPTO-full/prepare_only_decoder_data.py`
   - Builds the current only-decoder training dataset directly from `uspto_data.csv`.
   - Reuses `mapped_precursors()` from `extract_retrosyn_data.py` to recover `product -> reactants`, then aggregates duplicate `(product, reactants)` pairs, computes decoder token statistics, drops rows with `[UNK]` or sequence length above the configured threshold, and creates product-exclusive train/val/test splits.
+  - Can now apply the same audited leakage filter profile through `--apply-audit-v1-fix`, and can extend the blocklist via repeated `--process-molecule-smiles`.
+  - Writes the active extraction-policy flags (`apply_audit_v1_fix`, `process_molecule_blocklist`) into `summary.json` for reproducibility.
+  - Supports incremental progress snapshots via `--progress-every` and `--progress-json` during source aggregation, and writes completion state plus output summary path when finished.
   - Writes decoder-ready CSV and JSONL files under `USPTO-full/processed_only_decoder/`.
 - `USPTO-full/processed_only_decoder/`
   - Stores the current generated only-decoder dataset artifacts.

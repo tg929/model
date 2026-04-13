@@ -439,3 +439,325 @@
   - the sampled case manifest should stay `JSONL` because it carries nested context such as `top10_predictions`
   - the human audit table should be `CSV` because it is a flat manually edited annotation table
 - Updated `memory-bank/architecture.md` to document `decoder_test_results/` as an explicit workspace for evaluation outputs, reranker artifacts, and audit records.
+
+## 2026-04-08 Reranker And Audit Script Execution
+- Added the first-pass execution helpers:
+  - `decoder_runs/build_reranker_v1_input.py`
+  - `decoder_runs/score_reranker_v1.py`
+  - `decoder_runs/sample_thf_et3n_audit_cases.py`
+- Updated `memory-bank/architecture.md` to record the roles of those new helper scripts under `decoder_runs/`.
+- Verified the new helpers with:
+  - `conda run -n retrogp python -m py_compile decoder_runs/build_reranker_v1_input.py decoder_runs/score_reranker_v1.py decoder_runs/sample_thf_et3n_audit_cases.py`
+- Generated the full sample-level reranker input at:
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_input.jsonl`
+  - row count: `63,206`
+- Generated the first-pass `THF / Et3N` audit files at:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_cases.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_audit.csv`
+  - selected audit rows: `126`
+- Recorded the sampled audit availability counts used by the sampler:
+  - `THF`: `top1_hit=1`, `top1_miss_top10_hit=18`, `top10_miss=406`
+  - `Et3N`: `top1_hit=17`, `top1_miss_top10_hit=73`, `top10_miss=466`
+- Ran a small reranker smoke check on CPU because CUDA was not available in the current session:
+  - command used `--max-samples 2 --device cpu`
+  - outputs written to:
+    - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_smoke_scored.jsonl`
+    - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_smoke_metrics.json`
+  - smoke run completed without scoring failures
+
+## 2026-04-08 Reranker Resume Support
+- Updated `decoder_runs/score_reranker_v1.py` so interrupted full runs can resume from an existing `v1_reranker_scored.jsonl` instead of overwriting it.
+- The reranker now:
+  - scans existing scored rows on startup
+  - rebuilds metric accumulators from those persisted rows
+  - truncates a trailing partial JSON line if an earlier interruption left one behind
+  - appends only the remaining unseen samples from the input JSONL
+- Added `--overwrite` for explicit fresh runs when resume behavior is not wanted.
+- Verified the new resume path in `retrogp` with a small CPU continuation test:
+  - first pass: `--max-samples 3 --overwrite`
+  - second pass: `--max-samples 5`
+  - confirmed the output JSONL grew from `3` rows to `5` rows without reprocessing the first three samples
+
+## 2026-04-08 Full Reranker Completion And Concurrency Guard
+- Continued the interrupted full reranker job to completion on all `63,206` full-test samples.
+- Final full-run artifacts are:
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_scored.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_metrics.json`
+  - milestone metrics through `decoder_test_results/testall_epoch4_beamfix/reranker_v1/v1_reranker_metrics_up_to_63206.json`
+- Verified the final reranker output integrity:
+  - `v1_reranker_scored.jsonl` row count now matches `v1_reranker_input.jsonl` exactly at `63,206`
+  - `sample_idx` is contiguous from `0` to `63,205`
+  - `scoring_failed_samples=0`
+- Observed and fixed a concurrent-writer corruption during the resumed run:
+  - an older still-running scorer process kept appending to the same output path while the resumed process was running
+  - this left trailing non-JSON garbage after the last valid scored row
+  - truncated the output file back to the last valid JSON row before final verification
+- Hardened `decoder_runs/score_reranker_v1.py` against that failure mode by adding a non-blocking output lock file on the scored JSONL path, so a second writer now fails fast instead of corrupting the artifact.
+- Re-verified the updated scorer with:
+  - `conda run -n retrogp python -m py_compile decoder_runs/score_reranker_v1.py`
+  - `conda run -n retrogp python decoder_runs/score_reranker_v1.py --max-samples 63206 --device cpu`
+  - confirmed the scorer now recognizes the completed output via `resume_scan` and exits without appending new rows
+- Recorded the final reranker results on the full test set:
+  - original beam order: `top1 exact=0.4007`, `top10 exact=0.6291`
+  - `mean(target + EOS)`: `top1 exact=0.3947`, `top10 exact=0.6291`
+  - `mean(target)`: `top1 exact=0.3888`, `top10 exact=0.6291`
+  - `sum(target + EOS)`: `top1 exact=0.4007`, `top10 exact=0.6291`
+- Current execution conclusion:
+  - this clean `v1` teacher-forced reranker did not improve full-test `top1 exact`
+  - length-normalized target-side rescoring was slightly worse than the original beam ranking
+  - raw `sum(target + EOS)` reproduced the original top-k behavior instead of recovering additional top-1 hits
+
+## 2026-04-08 Audit Context And Clean-Subset Tooling
+- Added the next-step audit helpers:
+  - `decoder_runs/build_audit_context.py`
+  - `decoder_runs/eval_audited_clean_subset.py`
+- Updated `memory-bank/architecture.md` to record the roles of those new helpers and the expanded `audits/` artifact area.
+- Built the enriched manual-review companion file at:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_context.jsonl`
+- The new audit-context export joins each sampled row with:
+  - `example_raw_reaction` from the deduplicated split metadata
+  - demapped left / agent / product component lists
+  - focus-molecule presence flags across target, top-1, top-10, and raw-reaction sides
+  - current reranker top-1 outputs and target ranks per score variant
+- Built the audit-driven clean-subset placeholder artifacts at:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_effective_subset.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_metrics.json`
+- Verified current blank-audit state on the real CSV:
+  - `total_audit_rows=126`
+  - `pending_rows=126`
+  - `included_rows=0`
+  - `THF=59` pending rows
+  - `Et3N=67` pending rows
+- Verified the new helpers with:
+  - `conda run -n retrogp python -m py_compile decoder_runs/build_audit_context.py decoder_runs/eval_audited_clean_subset.py`
+  - `conda run -n retrogp python decoder_runs/build_audit_context.py`
+  - `conda run -n retrogp python decoder_runs/eval_audited_clean_subset.py`
+- Ran an additional temporary two-row smoke audit under `/tmp` to exercise both `keep_as_is` and `remove_focus_molecule` paths:
+  - confirmed the evaluator counts included rows correctly
+  - confirmed the evaluator emits effective-target outputs and comparative subset metrics for baseline plus reranker variants
+- Current execution conclusion:
+  - the project now has a complete manual-audit loop for `THF / Et3N`
+  - the next blocking step is filling `thf_et3n_round1_audit.csv`
+  - once those labels exist, the clean-subset metrics script can immediately quantify audited-subset recovery without more code changes
+
+## 2026-04-08 First THF Audit Batch
+- Manually audited the first `10` rows from the `THF top10_miss` bucket in:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_audit.csv`
+- All `10/10` of that first batch were labeled as:
+  - `focus_molecule_judgment=non_contributing_process_molecule`
+  - `target_action=remove_focus_molecule`
+  - `root_cause_hypothesis=mapping_leak`
+- The immediate rationale was consistent across the batch:
+  - the current extraction code only retains components whose atom-map IDs overlap the product
+  - each reviewed `THF` case still had atom-mapped `THF` atoms on the left side of `raw_reaction`
+  - this points to mapped-solvent leakage rather than a simple reranking failure
+- Rebuilt the derived audit artifacts after those `10` manual labels:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_context.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_effective_subset.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_metrics.json`
+- Current audit-progress counts are now:
+  - `total_audit_rows=126`
+  - `pending_rows=116`
+  - `included_rows=10`
+  - `remove_focus_molecule_rows=10`
+  - `THF included rows=10`
+  - `Et3N included rows=0`
+- On this first audited `THF` slice only:
+  - original target definition gave baseline `top10 exact=0.0`
+  - removing `THF` raised baseline audited-slice `top10 exact` to `0.1`
+  - `top1 exact` stayed `0.0` on this tiny slice, so the current evidence is about label noise, not an immediate top-1 recovery claim
+
+## 2026-04-08 THF Top10-Miss Continuation Batch
+- Continued manual auditing on the remaining `THF top10_miss` rows and filled the next `30` entries in:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_audit.csv`
+- The newly reviewed `30/30` rows were also labeled as:
+  - `focus_molecule_judgment=non_contributing_process_molecule`
+  - `target_action=remove_focus_molecule`
+  - `root_cause_hypothesis=mapping_leak`
+  - `notes=mapped THF on left carries product atom maps`
+- Programmatically re-checked mapping evidence for those `30` rows before writeback:
+  - each row has a mapped `THF` component on `mapped_left`
+  - each row has non-empty atom-map overlap between that mapped `THF` component and `mapped_products`
+  - no exceptions were found in this continuation batch
+- Rebuilt derived audit artifacts after the continuation batch:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_context.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_effective_subset.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_metrics.json`
+- Current audit-progress counts are now:
+  - `total_audit_rows=126`
+  - `pending_rows=86`
+  - `included_rows=40`
+  - `remove_focus_molecule_rows=40`
+  - `THF included rows=40` (all current included rows)
+  - `THF pending rows=19`
+  - `Et3N pending rows=67`
+- On the current audited `THF top10_miss` slice (`n=40`) only:
+  - against original targets, baseline `top10 exact` remains `0.0`
+  - against effective targets (after removing `THF`), baseline `top10 exact` is `0.05`
+  - baseline `top1 exact` remains `0.0`, so this stage still supports a label-noise diagnosis more than a direct top-1 recovery claim
+
+## 2026-04-08 THF And Et3N Full-Audit Completion
+- Completed all remaining pending audit rows in:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_audit.csv`
+- This completion batch filled:
+  - remaining `THF` rows: `19` (`top1_hit=1`, `top1_miss_top10_hit=18`)
+  - all remaining `Et3N` rows: `67` (`top1_hit=17`, `top1_miss_top10_hit=20`, `top10_miss=30`)
+- The completion batch labels were:
+  - `focus_molecule_judgment=non_contributing_process_molecule`
+  - `target_action=remove_focus_molecule`
+  - `root_cause_hypothesis=mapping_leak`
+  - molecule-specific notes:
+    - `THF`: `mapped THF on left carries product atom maps`
+    - `Et3N`: `mapped Et3N on left carries product atom maps`
+- Programmatic evidence check for the remaining `86` rows before writeback:
+  - every row had focus molecule in `mapped_left` with non-empty atom-map overlap vs `mapped_products`
+  - no anomaly rows were found
+  - `focus_in_demapped_products=False` for all remaining `86` rows
+- Rebuilt derived audit artifacts after full completion:
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_context.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_effective_subset.jsonl`
+  - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_metrics.json`
+- Final first-round audit counts are now:
+  - `total_audit_rows=126`
+  - `pending_rows=0`
+  - `included_rows=126`
+  - `remove_focus_molecule_rows=126`
+  - `THF included=59`, `Et3N included=67`
+- Updated clean-subset metrics on the fully audited subset (`n=126`):
+  - versus original targets (baseline beam order): `top1 exact=0.1429`, `top10 exact=0.4444`
+  - versus effective targets (baseline beam order): `top1 exact=0.0159`, `top10 exact=0.1349`
+  - `top1_exact_delta_effective_minus_original=-0.1270`
+- Current interpretation after full completion:
+  - the sampled `THF / Et3N` targets are strongly dominated by mapped process-molecule leakage
+  - once those molecules are removed from targets, exact-match rates on this audited subset collapse, indicating the current decoder predictions often still include those leaked process molecules
+
+## 2026-04-08 Audit-V1 Extraction Fix And Clean-Subset Reporting Caliber
+- Converted the completed `THF / Et3N` audit conclusion into a reusable extraction policy in:
+  - `USPTO-full/extract_retrosyn_data.py`
+- Extraction script upgrades in this step:
+  - added CLI arguments `--input` and `--output`
+  - added policy switch `--apply-audit-v1-fix`
+  - added extensibility hook `--process-molecule-smiles` (repeatable)
+  - defined `AUDIT_V1_PROCESS_MOLECULES = {C1CCOC1, CCN(CC)CC}` and applied it as a post-overlap filter when enabled
+  - policy behavior: after atom-map-overlap precursor selection, drop blocklisted process molecules that are absent from the demapped product
+- Propagated the same policy into dataset preparation in:
+  - `USPTO-full/prepare_only_decoder_data.py`
+- Dataset preparation upgrades in this step:
+  - added `--apply-audit-v1-fix` and `--process-molecule-smiles`
+  - threaded the blocklist into `mapped_precursors(...)`
+  - persisted active policy values in `processed_only_decoder/summary.json` via:
+    - `apply_audit_v1_fix`
+    - `process_molecule_blocklist`
+- Added a fixed-format clean-subset reporting renderer:
+  - `decoder_runs/render_clean_subset_report.py`
+  - output artifact:
+    - `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_report.md`
+- Validation completed:
+  - `conda run -n retrogp python -m py_compile USPTO-full/extract_retrosyn_data.py USPTO-full/prepare_only_decoder_data.py decoder_runs/render_clean_subset_report.py`
+  - small extraction smoke run on 200-row sample input for both legacy and `audit_v1_fix` profiles
+  - small dataset-prep smoke run on 200-row sample input for both legacy and `audit_v1_fix` profiles, with summary policy fields verified
+  - policy-alignment check on all audited `126` rows:
+    - when compared against “remove both THF and Et3N” effective targets, `audit_v1_fix` extraction outputs matched `126/126`
+    - a known `3`-row difference remains vs the current per-row `effective_target_text` field because that field removes only the row focus molecule, while `audit_v1_fix` removes both blocklisted molecules globally
+- Current execution conclusion:
+  - the `THF / Et3N` audit finding is now codified as a switchable extraction profile, not just a manual annotation result
+  - clean-subset reporting now has a reproducible markdown output and a locked dual-view metric structure (`original target` vs `effective target`)
+
+## 2026-04-08 Incremental Progress Snapshot Support
+- Added periodic on-disk progress checkpointing for long runs in:
+  - `USPTO-full/extract_retrosyn_data.py`
+  - `USPTO-full/prepare_only_decoder_data.py`
+  - `decoder_runs/render_clean_subset_report.py`
+- New shared behavior:
+  - `--progress-every` controls checkpoint interval (default `1000`, `0` disables periodic writes)
+  - `--progress-json` controls the checkpoint path (with script-specific defaults)
+  - each script now writes a final `status=completed` progress object containing final counters and key output paths
+- `extract_retrosyn_data.py` now:
+  - rewrites progress JSON every N processed source rows
+  - persists `total / kept / skipped` counters during run and on completion
+- `prepare_only_decoder_data.py` now:
+  - rewrites progress JSON every N source rows during the aggregation stage
+  - tracks stage transitions (`start`, `aggregate_from_source`, `post_aggregate`, `done`)
+  - writes completion counters plus `summary_json` path in final progress payload
+  - records `progress_every` and `progress_json` in dataset `summary.json` for reproducibility
+- `render_clean_subset_report.py` now:
+  - rewrites progress JSON every N scanned audit rows while counting special-case rows
+  - writes final completion payload with scanned-row and inclusion counters
+- Validation completed in `retrogp`:
+  - `conda run -n retrogp python -m py_compile USPTO-full/extract_retrosyn_data.py USPTO-full/prepare_only_decoder_data.py decoder_runs/render_clean_subset_report.py`
+  - 200-row extraction smoke with `--progress-every 50` produced completed progress JSON:
+    - `total=200`, `kept=105`, `skipped=95`
+  - 200-row dataset-prep smoke with `--progress-every 50` produced completed progress JSON:
+    - `processed_source_rows=200`, `extracted_rows=105`, `num_pair_rows=102`
+  - report-render smoke with `--progress-every 20` produced completed progress JSON:
+    - `scanned_audit_rows=126`, `rows_with_both_thf_et3n=3`
+
+## 2026-04-09 Audit-V1 No-Retrain Re-Evaluation Kickoff
+- Started the requested no-retrain side-by-side path: keep checkpoint fixed and re-evaluate on the new `audit_v1` extracted test set.
+- Confirmed split-size differences between legacy and `audit_v1` prepared data:
+  - legacy test rows: `63206` (`USPTO-full/processed_only_decoder/test.jsonl`)
+  - `audit_v1` test rows: `63203` (`USPTO-full/processed_only_decoder_audit_v1/test.jsonl`)
+- Verified this is not a simple row-aligned relabel:
+  - product overlap between old/new test sets is partial (`13349` shared products), so old full-test predictions cannot be safely reused for exact full re-scoring.
+- Ran a GPU speed probe for the exact eval config on `audit_v1` test data:
+  - command: `decoder/eval_retrosyn_only_decoder.py ... --beam-width 10 --top-ks 1,3,5,10 --max-new-tokens 256 --length-penalty 0.0 --device cuda --max-samples 20`
+  - wall-clock: `~89.5s` for `20` samples (`~4.48s/sample`)
+  - projected full `63203`-sample runtime: `~78.6h` (`~3.3 days`) on one `RTX 5090` GPU.
+- Launched the full no-retrain `audit_v1` evaluation in a persistent session:
+  - session id: `96800`
+  - checkpoint: `decoder_runs/only_decoder_650m_10epoch/best.pt`
+  - data: `USPTO-full/processed_only_decoder_audit_v1/test.jsonl`
+  - outputs:
+    - `decoder_test_results/testall_epoch4_beamfix_audit_v1/testall_best_metrics.json`
+    - `decoder_test_results/testall_epoch4_beamfix_audit_v1/testall_best_predictions.jsonl`
+  - progress cadence: `--save-every-samples 1000` (writes milestone metrics snapshots via eval script behavior)
+
+## 2026-04-12 Audit-V1 Resume Helper Script
+- Checked the interrupted `audit_v1` full-test eval state:
+  - current parsed prediction rows: `25095`
+  - latest milestone metrics file: `testall_best_metrics_up_to_25000.json`
+  - `testall_best_metrics.json` still had `completed=false`
+- Added a root-level temporary resume helper script:
+  - `resume_audit_v1_eval.sh`
+- Script behavior:
+  - auto-detects valid completed rows from existing `testall_best_predictions.jsonl`
+  - trims interrupted tail (empty/partial trailing line) after creating a timestamped backup
+  - creates the remaining test slice and runs `decoder/eval_retrosyn_only_decoder.py` only on the unfinished part
+  - merges old+new predictions and recomputes final `completed=true` metrics into:
+    - `decoder_test_results/testall_epoch4_beamfix_audit_v1/testall_best_metrics_completed.json`
+    - `decoder_test_results/testall_epoch4_beamfix_audit_v1/testall_best_predictions_completed.jsonl`
+  - syncs the completed outputs back to the canonical paths:
+    - `testall_best_metrics.json`
+    - `testall_best_predictions.jsonl`
+- Verified script syntax and executable bit:
+  - `bash -n resume_audit_v1_eval.sh`
+  - `chmod +x resume_audit_v1_eval.sh`
+- Applied a robustness fix after observing immediate session exits under `tmux`:
+  - updated the resume script's done-line detector to stop at blank lines, NUL-padded tail lines, or the first JSON parse failure instead of raising
+  - this handles interrupted prediction files whose truncation artifact is not an empty line but binary NUL padding
+
+## 2026-04-13 Audit-V1 Global-Cumulative Resume Normalization
+- Added a new root-level temporary resume script:
+  - `resume_audit_v1_eval_global.sh`
+- Script purpose:
+  - preserve and reuse already computed interrupted resume rows
+  - normalize progress reporting to global cumulative sample counts
+  - continue evaluation only on remaining rows while writing milestone files named like:
+    - `testall_best_metrics_up_to_26000.json`
+    - `testall_best_metrics_up_to_27000.json`
+    - ...
+- Verified and merged prior resume-part outputs into the canonical main predictions:
+  - `testall_best_predictions.jsonl` valid rows updated from `25095` to `34430`
+  - merged segment (`9335` rows) was alignment-checked against full test rows `25096-34430` on `product + target_text`
+- Recomputed and rewrote canonical cumulative metrics from the merged main predictions:
+  - `decoder_test_results/testall_epoch4_beamfix_audit_v1/testall_best_metrics.json` now reports `num_samples=34430`, `completed=false`
+  - regenerated milestone files through:
+    - `testall_best_metrics_up_to_34000.json`
+    - `testall_best_metrics_up_to_34430.json`
+- Removed obsolete artifacts from the earlier local-slice resume attempt:
+  - deleted old helper script `resume_audit_v1_eval.sh`
+  - deleted `testall_best_predictions_resume_part.jsonl`
+  - deleted `testall_best_metrics_resume_part.json`
+  - deleted all `testall_best_metrics_resume_part_up_to_*.json`
+  - deleted stale remaining-slice file `test_remaining_from_25096.jsonl`
+  - deleted stale resume logs/backups that belonged to the wrong local-slice run

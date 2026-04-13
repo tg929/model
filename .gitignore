@@ -15,3 +15,7 @@ decoder_runs/*
 !decoder_runs/*.py
 decoder_runs/__pycache__/*
 decoder_test_results/*
+*.pdf
+*.png
+nag2g.txt
+.codex

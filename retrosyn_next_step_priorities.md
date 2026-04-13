@@ -1021,10 +1021,55 @@ v1 暂不建议混入:
   - read-only sampled cases `JSONL`
   - human annotation table `CSV`
   - all under `decoder_test_results/testall_epoch4_beamfix/audits/`
+- `v1 reranker` full-run 已完成，当前结果为:
+  - 原始 beam 顺序: `top1 exact=0.4007`, `top10 exact=0.6291`
+  - `mean(target + EOS)`: `top1 exact=0.3947`, `top10 exact=0.6291`
+  - `mean(target)`: `top1 exact=0.3888`, `top10 exact=0.6291`
+  - `sum(target + EOS)`: `top1 exact=0.4007`, `top10 exact=0.6291`
+- 当前已确认:
+  - 这版纯 teacher-forced 候选重排没有带来 full-test `top1 exact` 提升
+  - `sum(target + EOS)` 基本等价于原 beam 排序
+  - 长度归一化的 `mean` 系列在当前 full-test 上反而略差
+  - `THF / Et3N` 的下一步执行工具已经齐备:
+    - enriched audit context: `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_context.jsonl`
+    - audit-driven clean-subset outputs: `thf_et3n_round1_effective_subset.jsonl` 与 `thf_et3n_round1_clean_subset_metrics.json`
+  - `thf_et3n_round1_audit.csv` 已完成首轮全量填写（`126/126`）
+  - 全量 `126` 条结果一致指向:
+    - `non_contributing_process_molecule`
+    - `remove_focus_molecule`
+    - `mapping_leak`
+  - 当前审计覆盖进度:
+    - `total=126`, `included=126`, `pending=0`
+    - `THF`: `59/59` 已审
+    - `Et3N`: `67/67` 已审
+  - 审计后的 clean-subset 指标（baseline beam order）:
+    - 对原始 target: `top1 exact=0.1429`, `top10 exact=0.4444`
+    - 对 effective target: `top1 exact=0.0159`, `top10 exact=0.1349`
+  - 已落地的抽取规则修复策略（`audit_v1_fix`）:
+    - 位置: `USPTO-full/extract_retrosyn_data.py`
+    - 开关: `--apply-audit-v1-fix`
+    - 规则: 先按 map overlap 选前体，再移除不在 demapped product 中的 `THF/Et3N` (`C1CCOC1`, `CCN(CC)CC`)
+    - 可扩展: `--process-molecule-smiles` 追加 blocklist
+  - `prepare_only_decoder_data.py` 已支持同一策略开关，并在 `summary.json` 记录:
+    - `apply_audit_v1_fix`
+    - `process_molecule_blocklist`
+  - clean-subset 报告口径已固化为可重放脚本:
+    - 脚本: `decoder_runs/render_clean_subset_report.py`
+    - 产物: `decoder_test_results/testall_epoch4_beamfix/audits/thf_et3n_round1_clean_subset_report.md`
+  - 长任务的增量落盘能力已补齐（默认每 `1000` 条）:
+    - `USPTO-full/extract_retrosyn_data.py`: `--progress-every`, `--progress-json`
+    - `USPTO-full/prepare_only_decoder_data.py`: `--progress-every`, `--progress-json`
+    - `decoder_runs/render_clean_subset_report.py`: `--progress-every`, `--progress-json`
+  - 口径差异提示:
+    - 现有按行 `focus` 的 effective-target 定义，与 `audit_v1_fix` 全局 blocklist 定义在 `3` 条含 `THF+Et3N` 的样本上会不同
+    - 后续汇报需明确声明使用的是哪一种 effective-target 口径
+  - 这轮全量结果进一步强化当前判断:
+    - `THF / Et3N` 样本里 process-molecule mapping leakage 非孤例，而是系统性问题
+    - 当前模型在这类样本上经常把泄漏分子一并预测出来，导致 effective target 下 exact 明显下降
 
 ### 9.2 当前待决问题
 
-1. 第一版 reranker 只做 beam 候选重排，还是同时引入额外特征?
+1. 在 `v1` 纯重排失败之后，下一步应优先转向 `THF / Et3N` 数据审计，还是继续做带 score fusion / 额外特征的 `v2 reranker`?
 2. 数据清洗应该走“修抽取规则”还是“基于现有 split 再生成 clean subset”?
 3. 后续主汇报指标应该用:
    - 原始 full-test
@@ -1044,13 +1089,19 @@ v1 暂不建议混入:
 
 ## 10. 当前的执行建议
 
-如果按最小闭环来做，建议下一步顺序是:
+基于当前 `v1 reranker` full-run 结果和 `THF / Et3N` 首轮全量审计结果，建议顺序收缩为:
 
-1. 定义第一版 reranker 评估方案
-2. 抽样审查 `P0` 可疑标签分子
-3. 根据审查结果决定是修规则还是先做 clean subset
-4. 在上述两步完成后，再决定是否继续追加训练轮数
+1. 把审计结论转成可复现实验口径（明确 effective-target 评估口径与报告口径）
+2. 决定数据清洗路径：先做 split 后 clean-subset，还是回到抽取规则侧修复
+3. 在统一后的口径上再判断是否值得做 `v2 reranker`
+4. 最后再决定是否继续追加训练轮数
+
+原因很直接:
+
+- 当前这版最干净的 pure reranker baseline 已经跑完，且没有把 full-test `top1 exact` 从 `0.4007` 往上拉
+- `THF / Et3N` 首轮审计 `126/126` 已完成，并确认了强烈的标签边界泄漏信号
+- 所以后续优先级应转向“先固定数据与评估口径”，再讨论更复杂 reranker
 
 一句话总结:
 
-> 当前阶段最值得投入的，不是继续盲目训练，而是先把“候选排序问题”和“标签边界问题”分开处理清楚。
+> 当前阶段最值得投入的，不是继续打磨同一版 pure reranker，而是先把“标签边界问题”审清，再决定是否需要更强的 `v2 reranker`。
