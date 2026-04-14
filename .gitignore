@@ -21,3 +21,5 @@ nag2g.txt
 .codex
 USPTO_50K-mbera/*
 schneider50k
+!schneider50k/prepare_only_decoder_data_50k.py
+!schneider50k/build_typed_splits.py

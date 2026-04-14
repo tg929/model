@@ -785,3 +785,68 @@
 - Verified integrity:
   - typed files preserve row count, `id`, and reaction string order vs corresponding raw files
   - no `UNK` class values remain in typed outputs
+
+## 2026-04-13 Schneider50k Unknown Only-Decoder Prep
+- Added a dedicated unknown-class preparation script:
+  - `schneider50k/prepare_only_decoder_data_50k.py`
+- Script behavior:
+  - reads fixed benchmark split inputs:
+    - `schneider50k/raw_train.csv`
+    - `schneider50k/raw_val.csv`
+    - `schneider50k/raw_test.csv`
+  - preserves split membership strictly (`split_policy=official_raw_fixed_split`, `allow_resplit=false`)
+  - reuses `mapped_precursors(...)` from `USPTO-full/extract_retrosyn_data.py` for map-overlap precursor extraction
+  - writes `source_text=product>>` and `target_text=reactants` only-decoder rows
+  - applies `[UNK]` / max-sequence-length filtering (`drop_unk=true`, `max_sequence_token_len=256`)
+  - supports `--apply-audit-v1-fix`, extra process-molecule blocklist extension, and incremental progress snapshots (`--progress-every`, `--progress-json`)
+- Ran full preparation in `retrogp` with:
+  - `conda run -n retrogp python schneider50k/prepare_only_decoder_data_50k.py --output-dir schneider50k/processed_only_decoder_unknown --progress-every 1000`
+- Generated artifacts:
+  - `schneider50k/processed_only_decoder_unknown/train.jsonl` (`39990` rows)
+  - `schneider50k/processed_only_decoder_unknown/val.jsonl` (`5001` rows)
+  - `schneider50k/processed_only_decoder_unknown/test.jsonl` (`5005` rows)
+  - `schneider50k/processed_only_decoder_unknown/retrosyn_with_meta.csv` (`49996` rows)
+  - `schneider50k/processed_only_decoder_unknown/retrosyn_dropped.csv` (`20` rows; all were `too_long`)
+  - `schneider50k/processed_only_decoder_unknown/summary.json`
+  - `schneider50k/processed_only_decoder_unknown/prepare_only_decoder_data_50k.progress.json`
+- Final summary highlights:
+  - input rows: `50016`
+  - kept rows: `49996`
+  - dropped rows: `20`
+  - kept-product overlap still present across official splits:
+    - `train&val=62`
+    - `train&test=69`
+    - `val&test=7`
+
+## 2026-04-13 Schneider50k Unknown Training Launcher
+- Added a temporary root launcher script:
+  - `run_train_50k_unknown_onlydecoder_v1.sh`
+- Script purpose:
+  - starts cold-start only-decoder training on `schneider50k/processed_only_decoder_unknown` from `decoder/weights/SMILES-650M-3B-Epoch1.pt`
+  - uses the existing chained trainer `decoder_runs/run_only_decoder_5epoch.py` for a reproducible 5-epoch baseline run
+  - keeps run output under:
+    - `decoder_runs/uspto50k_unknown_onlydecoder_v1/`
+  - enables periodic on-disk training snapshots (`--save-every-steps 1000`) and periodic full validation checks (`--val-checks-per-epoch 5`)
+- Verified launcher script syntax and executable bit:
+  - `bash -n run_train_50k_unknown_onlydecoder_v1.sh`
+  - `chmod +x run_train_50k_unknown_onlydecoder_v1.sh`
+
+## 2026-04-13 Schneider50k Unknown Best-Checkpoint Eval Launcher
+- Added a temporary root eval launcher script:
+  - `run_eval_50k_unknown_onlydecoder_v1_best.sh`
+- Script purpose:
+  - evaluates `decoder_runs/uspto50k_unknown_onlydecoder_v1/best.pt` on:
+    - `schneider50k/processed_only_decoder_unknown/test.jsonl`
+  - uses beam-search settings aligned with current retrosynthesis baseline:
+    - `beam_width=10`
+    - `top_ks=1,3,5,10`
+    - `max_new_tokens=256`
+    - `length_penalty=0.0`
+  - enables periodic metric snapshots with:
+    - `--save-every-samples 1000`
+  - writes outputs to:
+    - `decoder_test_results/uspto50k_unknown_onlydecoder_v1_best/test_best_metrics.json`
+    - `decoder_test_results/uspto50k_unknown_onlydecoder_v1_best/test_best_predictions.jsonl`
+- Verified eval launcher script syntax and executable bit:
+  - `bash -n run_eval_50k_unknown_onlydecoder_v1_best.sh`
+  - `chmod +x run_eval_50k_unknown_onlydecoder_v1_best.sh`

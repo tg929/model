@@ -39,6 +39,8 @@ The current workspace does not yet provide a first-class conditioned encoder-dec
   - `raw_train.csv`, `raw_val.csv`, `raw_test.csv` are the unknown-class version (`class=UNK`).
   - `build_typed_splits.py` fills known reaction classes (`1..10`) by exact-key mapping against the public Retrosim `data_processed.csv`.
   - `typed_train.csv`, `typed_val.csv`, `typed_test.csv` are generated known-class outputs that preserve row order and split membership.
+  - `prepare_only_decoder_data_50k.py` prepares unknown-class only-decoder training/eval files while preserving official fixed split membership (`train/val/test`) with no re-splitting.
+  - `processed_only_decoder_unknown/` stores generated unknown-class only-decoder artifacts (`train/val/test` JSONL/CSV, dropped rows, summary, and progress snapshot JSON).
 - `.metaflow/`
   - Stores local execution metadata for the USPTO preparation workflow.
   - Currently contains records for `UsptoDataPreparationFlow`, which produced the checked-in `USPTO-full/` data artifacts.
